@@ -42,7 +42,7 @@ for df in [teams_df, matchups_df, players_df, draft_roster_df, final_roster_df]:
 # Tabs for different views
 tab1, tab2, tab3, tab4 = st.tabs(["League Standings", "Hall of Fame/ Shame", "Draft Boards", "League Rules"])
 with tab1:
-    show_league_insights(st, go, teams_df)
+    show_league_insights(st, go, teams_df, matchups_df)
 with tab2:
     show_hall_of_fame(st, teams_df, matchups_df, players_df)
 with tab3:
