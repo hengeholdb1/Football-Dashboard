@@ -129,7 +129,7 @@ def show_draft_board(st, teams_df, draft_roster_df, players_df, matchups_df):
 
     # --- Build cell HTML ---
     roster_full["cell_value"] = (
-        "<span style='font-size:12px; font-weight:600;'>"
+        "<span style='font-size:12px; font-weight:600; white-space:nowrap; display:inline-block;'>"
         + roster_full["pick_num"].astype(str) + ". "
         + roster_full["player_name"] + " ("
         + roster_full["player_position"] + ")</span>"
@@ -162,7 +162,7 @@ def show_draft_board(st, teams_df, draft_roster_df, players_df, matchups_df):
 
     draft_board = draft_board.reindex(columns=owner_order)
     draft_board = draft_board.dropna(how="all")
-    draft_board.index.name = "Round #"
+    draft_board.index.name = "Round"
 
     # --- Coloring by position + keeper override ---
     def color_cell(val, is_keeper):
@@ -186,8 +186,8 @@ def show_draft_board(st, teams_df, draft_roster_df, players_df, matchups_df):
     # --- Build HTML table (sticky top row + sticky left column) ---
     header_html = "".join(
         [f"<th style='background:#666; color:white; font-size:12px; font-weight:700; "
-          f"padding:4px 6px; text-align:center; position:sticky; top:0; z-index:2;'>{col}</th>"
-         for col in ["Round #"] + owner_order]
+          f"padding:1px 4px; text-align:center; position:sticky; top:0; z-index:2;'>{col}</th>"
+         for col in ["Round"] + owner_order]
     )
 
     body_html = ""
@@ -196,14 +196,14 @@ def show_draft_board(st, teams_df, draft_roster_df, players_df, matchups_df):
         # Round number on left (sticky left col)
         body_html += (
             f"<td style='background:#666; color:white; font-size:11px; font-weight:700; "
-            f"padding:4px 6px; text-align:center; white-space:nowrap; "
+            f"padding:1px 4px; text-align:center; white-space:nowrap; "
             f"position:sticky; left:0; z-index:1;'>{rnd}</td>"
         )
         # Picks per owner
         for owner in owner_order:
             val = row[owner]
             if pd.isna(val):
-                body_html += "<td style='background:#222; color:white; font-size:10px; padding:4px 6px; text-align:center;'>–</td>"
+                body_html += "<td style='background:#222; color:white; font-size:10px; padding:1px 4px; text-align:center;'>–</td>"
             else:
                 is_keeper = season_df[
                     (season_df["round_num"] == rnd) &
@@ -212,7 +212,7 @@ def show_draft_board(st, teams_df, draft_roster_df, players_df, matchups_df):
                 ]["is_keeper"].any()
                 style = color_cell(val, is_keeper)
                 body_html += (
-                    f"<td style='{style} font-size:10px; padding:4px 6px; "
+                    f"<td style='{style} font-size:10px; padding:1px 4px; "
                     f"text-align:center; white-space:normal;'>{val}</td>"
                 )
         body_html += "</tr>"
