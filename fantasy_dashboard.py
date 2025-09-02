@@ -37,10 +37,13 @@ try:
     )
     regular_df = df[df['is_playoffs'] == 0]
 
-    # Merge matchup info into players_df (only bring in is_playoffs)
+# Merge matchup info into players_df (only bring in is_playoffs)
+    # Create join key in both dataframes
+    matchups_df['team_week_key'] = matchups_df['team_key'].astype(str) + '_' + matchups_df['week'].astype(str)
+    players_df['team_week_key'] = players_df['team_key'].astype(str) + '_' + players_df['week'].astype(str)
     players_df = players_df.merge(
-        matchups_df[['matchup_key', 'is_playoffs']],
-        on='matchup_key', how='left')
+        matchups_df[['team_week_key', 'is_playoffs']],
+        on='team_week_key', how='left')
 
     # Merge team owner/year info into players_df using players' team_key
     players_df = players_df.merge(
@@ -314,6 +317,7 @@ try:
                   <div class="card-value">No data</div>
                 </div>
             """, unsafe_allow_html=True)
+
 
         # Most times starting a player with ≤ 0 points
         bad_starts = players_df[
