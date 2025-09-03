@@ -26,10 +26,32 @@ st.markdown("""
         .card-sub { margin-top: 0.1rem; font-size: 0.8rem; background-color: #444; color: #eee;
                     padding: 0rem 0.5rem; border-radius: 0.4rem; display: inline-block; }
     </style>
+    
+""", unsafe_allow_html=True)
+
+st.markdown("""
+    <style>
+        /* Fixed scroll hint at bottom */
+        .scroll-hint {
+            position: fixed;
+            bottom: 6px;
+            left: 12px;
+            font-size: 12px;
+            color: #aaa;
+            z-index: 9999;
+            pointer-events: none;
+        }
+        /* Hide on larger screens (desktop/tablet) */
+        @media (min-width: 768px) {
+            .scroll-hint { display: none; }
+        }
+    </style>
+    <div class="scroll-hint">↓ Scroll for more</div>
 """, unsafe_allow_html=True)
 
 st.markdown(f"""
-<div style="
+</style>
+    <div style="
   display:flex;
   align-items:center;
   gap:15px;
@@ -55,6 +77,7 @@ st.markdown(f"""
     Dayton Boyz Fantasy Football
   </div>
 </div>
+
 """, unsafe_allow_html=True)
 
 
