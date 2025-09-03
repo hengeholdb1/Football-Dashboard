@@ -190,7 +190,7 @@ def show_league_insights(st, go, teams_df, matchups_df):
             x=0.5,
             font=dict(size=10, color="white")
         ),
-        height=380,
+        height=370,
         margin=dict(l=10, r=10, t=0, b=10),
         bargap=0.18
     )

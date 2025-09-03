@@ -17,6 +17,18 @@ logo_b64 = base64.b64encode(logo_path.read_bytes()).decode()
 
 # Page config and styling
 st.set_page_config(page_title="Dayton Boyz Fantasy Football", layout="wide")
+
+st.markdown("""
+<style>
+header.stAppHeader {
+    background-color: transparent;
+}
+section.stMain .block-container {
+    padding-top: 0rem;
+    z-index: 1;
+}
+</style>""", unsafe_allow_html=True)
+
 st.markdown("""
     <style>
         .block-container { padding-top: 2rem; }
@@ -104,7 +116,7 @@ page = st.selectbox(
     label="Navigation",  # accessibility only
     options=[
         "League Rankings",
-        "GM Report",
+        "Owner Metrics",
         "Team Insights",
         "Hall of Fame/ Shame",
         "Draft Boards",
@@ -117,8 +129,8 @@ page = st.selectbox(
 if page == "League Rankings":
     show_league_insights(st, go, teams_df, matchups_df)
 
-elif page == "GM Report":
-    show_owner_insights(st, go, teams_df, matchups_df, players_df)
+elif page == "Owner Metrics":
+    show_owner_insights(st, go, teams_df, matchups_df)
 
 elif page == "Team Insights":
     show_team_insights(st, go, teams_df, matchups_df, players_df)
