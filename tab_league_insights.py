@@ -108,6 +108,7 @@ def show_league_insights(st, go, teams_df, matchups_df):
     insights_df = insights_df.merge(owner_avg_flags, on='owner_name', how='left')
 
     # ---------- Plot at top (unchanged visual style) ----------
+# ---------- Plot at top (stack champs + runner-ups, losers to left) ----------
     awards_df = insights_df.copy()
     if show_current:
         awards_df = awards_df[awards_df['owner_name'].isin(current_owners)]
@@ -120,34 +121,36 @@ def show_league_insights(st, go, teams_df, matchups_df):
     ]
 
     fig = go.Figure()
+
+    # Champs (positive)
     fig.add_trace(go.Bar(
         y=y_vals,
         x=awards_df['# League Champs'].astype(int),
-        name='Championship',
+        name='Champ',
         marker_color='#FFD700',
-        orientation='h',
-        offsetgroup='awards',
-        base=0
+        orientation='h'
     ))
+
+    # Runner-Ups (also positive -> stacks on champs)
     fig.add_trace(go.Bar(
         y=y_vals,
         x=awards_df['# League Runner-Ups'].astype(int),
         name='Runner-Up',
         marker_color='#C0C0C0',
-        orientation='h',
-        offsetgroup='awards'
+        orientation='h'
     ))
+
+    # Losers (negative -> stacks to the left of zero)
     fig.add_trace(go.Bar(
         y=y_vals,
         x=-awards_df['# League Losers'].astype(int),
         name='Loser',
         marker_color='red',
-        orientation='h',
-        offsetgroup='awards',
-        base=0
+        orientation='h'
     ))
+
     fig.update_layout(
-        barmode='relative',
+        barmode='relative',  # positive stacks together; negatives stack on the left
         yaxis_title='Owner/ Power Ranking',
         yaxis=dict(
             tickmode='array',
@@ -185,13 +188,15 @@ def show_league_insights(st, go, teams_df, matchups_df):
             y=-0.2,
             xanchor='center',
             x=0.5,
-            font=dict(size=12, color="white")
+            font=dict(size=10, color="white")
         ),
         height=380,
         margin=dict(l=10, r=10, t=0, b=10),
         bargap=0.18
     )
+
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False, 'staticPlot': True})
+
 
     # ---------- Final table (same HTML look, new order) ----------
     final_df = insights_df.rename(columns={'owner_name': 'Owner Name'})
@@ -213,13 +218,15 @@ def show_league_insights(st, go, teams_df, matchups_df):
     if 'Power Ranking' in final_df.columns:
         final_df = final_df.sort_values('Power Ranking', ascending=True).reset_index(drop=True)
 
-    st.markdown('<span style="font-size:20px;font-weight:500;line-height:1.2;padding:2px 0;">Owner Performance Summary</span>', unsafe_allow_html=True)
-
+    st.markdown('<div style="font-size:20px;font-weight:600;line-height:1.1;margin-top:15px;margin-bottom:2px;">Owner Performance Summary</div>', unsafe_allow_html=True)
+    
     def make_html_table(df):
         min_col_width = 90
         col_width = f"{max(min_col_width, 100/len(df.columns)):.2f}px"
         hdr = ''.join(
-            f'<th style="min-width:{col_width};padding:4px;background-color:#333;color:white;border:1px solid #555;position:sticky;top:0;z-index:2;font-size:12px;">{col}</th>'
+            f'<th style="min-width:{col_width};padding:4px;background-color:#333;color:white;'
+            f'border:1px solid #555;position:sticky;top:0;z-index:2;font-size:12px;'
+            f'text-align:center;">{col}</th>'
             for col in df.columns
         )
         body = ''
@@ -233,9 +240,12 @@ def show_league_insights(st, go, teams_df, matchups_df):
             body += '</tr>'
         return f'''
         <div style="overflow-x:auto;max-width:100vw;">
-          <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:{min_col_width*len(df.columns)}px;">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:{min_col_width*len(df.columns)}px;">
             <thead><tr>{hdr}</tr></thead><tbody>{body}</tbody>
-          </table>
+        </table>
+        <div style="font-size:11px;color:#aaa;margin-top:4px;text-align:right;">
+            ↔️ Table is scrollable
+        </div>
         </div>
         '''
 

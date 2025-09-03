@@ -183,20 +183,20 @@ def show_draft_board(st, teams_df, draft_roster_df, players_df, matchups_df):
         return "background-color:#222; color:white;"
 
     # --- Build HTML table (centered owner headers + mobile scroll) ---
-    # --- Build HTML table (sticky top row + sticky left column) ---
     header_html = "".join(
-        [f"<th style='background:#666; color:white; font-size:12px; font-weight:700; "
-          f"padding:1px 4px; text-align:center; position:sticky; top:0; z-index:2;'>{col}</th>"
-         for col in ["Round"] + owner_order]
+        [f"<th style='background-color:#333; color:white; font-size:12px; font-weight:700; "
+        f"padding:4px; border:1px solid #555; text-align:center; "
+        f"position:sticky; top:0; z-index:2;'>{col}</th>"
+        for col in ["Round"] + owner_order]
     )
 
+    # --- Round column (sticky left) ---
     body_html = ""
     for rnd, row in draft_board.iterrows():
         body_html += "<tr>"
-        # Round number on left (sticky left col)
         body_html += (
-            f"<td style='background:#666; color:white; font-size:11px; font-weight:700; "
-            f"padding:1px 4px; text-align:center; white-space:nowrap; "
+            f"<td style='background-color:#222; color:white; font-size:11px; font-weight:700; "
+            f"padding:4px; border:1px solid #333; text-align:center; white-space:nowrap; "
             f"position:sticky; left:0; z-index:1;'>{rnd}</td>"
         )
         # Picks per owner
@@ -223,7 +223,10 @@ def show_draft_board(st, teams_df, draft_roster_df, players_df, matchups_df):
         <thead><tr>{header_html}</tr></thead>
         <tbody>{body_html}</tbody>
       </table>
-    </div>
+        <div style="font-size:11px;color:#aaa;margin-top:4px;text-align:right;">
+            ↔️ Table is scrollable
+        </div>
+        </div>
     """
 
     # --- Legend (simple chips) ---

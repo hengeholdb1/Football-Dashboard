@@ -1,4 +1,29 @@
 def show_hall_of_fame(st, teams_df, matchups_df, players_df):
+    # --- Inject CSS to tighten spacing ---
+    st.markdown("""
+        <style>
+        .card {
+            background-color: #222;
+            border-radius: 8px;
+            padding: 8px 12px;
+            margin: 4px 0; /* reduce vertical space between cards */
+        }
+        .card-label {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+        .card-value {
+            font-size: 16px;
+            font-weight: 500;
+        }
+        .card-sub {
+            font-size: 12px;
+            color: #aaa;
+            margin-top: 2px;
+        }
+    """, unsafe_allow_html=True)
+
     # Merge to get owner_name and year
     df = matchups_df.merge(
         teams_df[['team_key', 'owner_name', 'year']],
@@ -6,8 +31,7 @@ def show_hall_of_fame(st, teams_df, matchups_df, players_df):
     )
     regular_df = df[df['is_playoffs'] == 0]
 
-    # ...existing code for Hall of Fame/Shame tab...
-    # Example: Champs & Chumps table
+    # Champs & Chumps
     wl_df = teams_df[teams_df['league_result'].isin(['Winner', 'Runner-up', 'Loser'])][
         ['year', 'owner_name', 'league_result']
     ]
@@ -22,6 +46,7 @@ def show_hall_of_fame(st, teams_df, matchups_df, players_df):
              .rename(columns={"year": "Year"})
     )
     clean_table = result_table[["Year", "🥇 Winner", "🥈 Runner-up", "🗑️ Loser"]]
+
     def make_html_table(df):
         hdr = ''.join(
             f'<th style="padding:8px;background-color:#333;color:white;border:1px solid #555;">{col}</th>'
@@ -40,19 +65,25 @@ def show_hall_of_fame(st, teams_df, matchups_df, players_df):
           </table>
         </div>
         '''
-    st.subheader("Champs & Chumps")
+
+    st.markdown(
+    '<div style="font-size:25px;font-weight:600;line-height:1.1;margin-top:-12px;margin-bottom:2px;">Champs & Chumps</div>',
+    unsafe_allow_html=True)
+
     st.markdown(make_html_table(clean_table), unsafe_allow_html=True)
+
+    # All Time Legends
+    st.markdown(
+    '<div style="font-size:25px;font-weight:600;line-height:1.1;margin-top:15px;margin-bottom:2px;">All Time Legends</div>',
+    unsafe_allow_html=True)
     
-    # All Time Perfomers
-    st.subheader("All Time Legends")
-    col11, col4, col1, col2, col3, col8 = st.columns(6)
+    col11, col4, col1, col2, col3, col8 = st.columns(6, gap="small")
 
     # Best Avg Regular Season Rank
     ranking_df = teams_df[
         (teams_df['is_finished'] == 1) & 
         (teams_df['regular_season_ranking'].notnull())
     ]
-
     avg_rankings = ranking_df.groupby('owner_name').agg(
         avg_rank=('regular_season_ranking', 'mean'),
         seasons=('year', 'nunique')
@@ -94,7 +125,6 @@ def show_hall_of_fame(st, teams_df, matchups_df, players_df):
             </div>
         """, unsafe_allow_html=True)
 
-        
     # Most Weekly High Scores
     high_counts = regular_df[regular_df['high_score_flag'] == 1].groupby('owner_name').size()
     if not high_counts.empty:
@@ -109,7 +139,6 @@ def show_hall_of_fame(st, teams_df, matchups_df, players_df):
             <div class="card-value">{text_hi}</div>
         </div>
     """, unsafe_allow_html=True)
-
 
     # Highest Weekly Score
     if not regular_df['points_for'].isnull().all():
@@ -147,7 +176,6 @@ def show_hall_of_fame(st, teams_df, matchups_df, players_df):
         """, unsafe_allow_html=True)
 
     # --- Ensure players_df has is_playoffs and owner/year info ---
-    # Create join key in both dataframes
     matchups_df['team_week_key'] = matchups_df['team_key'].astype(str) + '_' + matchups_df['week'].astype(str)
     players_df['team_week_key'] = players_df['team_key'].astype(str) + '_' + players_df['week'].astype(str)
     players_df = players_df.merge(
@@ -180,17 +208,17 @@ def show_hall_of_fame(st, teams_df, matchups_df, players_df):
             </div>
         """, unsafe_allow_html=True)
 
+    # All Time Duds
+    st.markdown('<div style="font-size:25px;font-weight:600;line-height:1.1;margin-top:15px;margin-bottom:2px;">All Time Duds</div>',
+    unsafe_allow_html=True)
 
-    # New Section: All Time Duds 
-    st.subheader("All Time Duds")
-    col12, col7, col5, col6, col10, col9 = st.columns(6)
+    col12, col7, col5, col6, col10, col9 = st.columns(6, gap="small")
 
     # Worst Avg Regular Season Rank
     ranking_df = teams_df[
         (teams_df['is_finished'] == 1) & 
         (teams_df['regular_season_ranking'].notnull())
     ]
-
     avg_rankings = ranking_df.groupby('owner_name').agg(
         avg_rank=('regular_season_ranking', 'mean'),
         seasons=('year', 'nunique')
@@ -214,7 +242,6 @@ def show_hall_of_fame(st, teams_df, matchups_df, players_df):
             </div>
         """, unsafe_allow_html=True)
 
-
     # Lowest Win %
     win_df = teams_df.dropna(subset=['wins', 'losses'])
     win_df['total_games'] = win_df['wins'] + win_df['losses']
@@ -227,7 +254,7 @@ def show_hall_of_fame(st, teams_df, matchups_df, players_df):
         seasons=('year', 'nunique')
     )
     owner_stats['total_games'] = owner_stats['wins'] + owner_stats['losses']
-    owner_stats = owner_stats[owner_stats['seasons'] > 1]  # ✅ Only multi-season owners
+    owner_stats = owner_stats[owner_stats['seasons'] > 1]  
     owner_stats['win_pct'] = owner_stats['wins'] / owner_stats['total_games']
 
     if not owner_stats.empty:
@@ -247,7 +274,6 @@ def show_hall_of_fame(st, teams_df, matchups_df, players_df):
             </div>
         """, unsafe_allow_html=True)
 
-    
     # Most Weekly Low Scores
     low_counts = regular_df[regular_df['low_score_flag'] == 1].groupby('owner_name').size()
     if not low_counts.empty:
@@ -283,14 +309,12 @@ def show_hall_of_fame(st, teams_df, matchups_df, players_df):
             </div>
         """, unsafe_allow_html=True)
 
-
     # Most times starting a player with ≤ 0 points
     bad_starts = players_df[
         (players_df['is_playoffs'] == 0) &
         (~players_df['selected_position'].isin(['BN', 'IR'])) &
         (players_df['player_week_points'] <= 0)
     ]
-
     zero_counts = bad_starts.groupby('owner_name').size()
 
     if not zero_counts.empty:
