@@ -1,7 +1,7 @@
 import pandas as pd  # make sure this is at top of file
 
 def show_league_insights(st, go, teams_df, matchups_df):
-    st.markdown('<div style="font-size:20px;font-weight:600;margin-bottom:0;">Owner Power Rankings</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-size:20px;font-weight:600;margin-bottom:0;">League Awards</div>', unsafe_allow_html=True)
 
     # ---------- Base ranking & win% ----------
     ranking_df = teams_df[
@@ -54,13 +54,13 @@ def show_league_insights(st, go, teams_df, matchups_df):
     insights_df['Total Seasons'] = insights_df['owner_name'].apply(lambda x: playoff_count(x)[1])
     insights_df['Playoff Appearance %'] = (insights_df['Playoff Seasons'] / insights_df['Total Seasons'] * 100).round(1)
     insights_df['# League Champs'] = insights_df['owner_name'].apply(champ_count)
-    insights_df['# League Runner-Ups'] = insights_df['owner_name'].apply(runnerup_count)     # renamed label
+    insights_df['# League Runner-Ups'] = insights_df['owner_name'].apply(runnerup_count)
     insights_df['# League Losers'] = insights_df['owner_name'].apply(loser_count)
 
     # ---------- Power Ranking ----------
     insights_df['Power Ranking Score'] = (
         insights_df['# League Champs'] * 5 +
-        insights_df['# League Runner-Ups'] * 3 -
+        insights_df['# League Runner-Ups'] * 3 - 
         insights_df['# League Losers'] * 2 -
         insights_df['Avg Regular Season Rank'] +
         insights_df['Total Seasons'] * 0.5
@@ -89,53 +89,40 @@ def show_league_insights(st, go, teams_df, matchups_df):
     m = matchups_df.merge(owner_map, on='team_key', how='left')
     m = m[(m['is_playoffs'] == 0) & (m['year'] != 2017)].copy()
 
-    # --- FIX: pick a canonical year and coerce numeric flags/playoffs ---
-    # If both sides had `year`, a merge creates year_x/year_y; unify to a single `year`.
-    if 'year' not in m.columns:
-        # no conflict, but just in case
-        pass
-    elif 'year_x' in m.columns or 'year_y' in m.columns:
-        # Prefer matchups year when present; else take the owner_map year.
+    # unify year if needed
+    if 'year_x' in m.columns or 'year_y' in m.columns:
         m['year'] = m.get('year_x', pd.NA)
         if 'year_y' in m.columns:
             m['year'] = m['year'].fillna(m['year_y'])
-        # Clean up any merge suffix leftovers
         for c in ['year_x', 'year_y']:
             if c in m.columns:
                 m.drop(columns=c, inplace=True)
 
-    # Coerce types BEFORE filtering
     for col in ['year', 'is_playoffs', 'high_score_flag', 'low_score_flag']:
         if col in m.columns:
             m[col] = pd.to_numeric(m[col], errors='coerce')
 
-    # Treat missing as 0 for flags/playoffs
     m['is_playoffs'] = m['is_playoffs'].fillna(0).astype(int)
     m['high_score_flag'] = m['high_score_flag'].fillna(0).astype(int)
     m['low_score_flag']  = m['low_score_flag'].fillna(0).astype(int)
 
-    # (Optional) If your matchups file contains both "regular" and "inverse" rows,
-    # dedupe to one row per team-week to avoid double counting.
-    # Keep the max of the flags within each (team_key, year, week).
     if {'team_key','week'}.issubset(m.columns):
         m = (m
-            .sort_values(['team_key','year','week'])
-            .groupby(['team_key','year','week'], as_index=False, dropna=False)
-            .agg({
-                'owner_name': 'first',
-                'is_playoffs': 'max',
-                'high_score_flag': 'max',
-                'low_score_flag': 'max'
-            }))
+             .sort_values(['team_key','year','week'])
+             .groupby(['team_key','year','week'], as_index=False, dropna=False)
+             .agg({
+                 'owner_name': 'first',
+                 'is_playoffs': 'max',
+                 'high_score_flag': 'max',
+                 'low_score_flag': 'max'
+             }))
 
-    # Columns already coerced above; just aggregate
     owner_year_flags = (m
         .groupby(['owner_name', 'year'], dropna=False)
         .agg(high_scores=('high_score_flag', 'sum'),
-            low_scores =('low_score_flag',  'sum'))
+             low_scores =('low_score_flag',  'sum'))
         .reset_index()
     )
-
 
     owner_avg_flags = owner_year_flags.groupby('owner_name', dropna=False).agg(
         **{'Avg High Scores/Year': ('high_scores', 'mean'),
@@ -144,22 +131,23 @@ def show_league_insights(st, go, teams_df, matchups_df):
 
     insights_df = insights_df.merge(owner_avg_flags, on='owner_name', how='left')
 
-    # ---------- Plot at top (unchanged visual style) ----------
-# ---------- Plot at top (stack champs + runner-ups, losers to left) ----------
+    # ---------- Plot: stack champs + runner-ups (right), losers (left) ----------
     awards_df = insights_df.copy()
     if show_current:
         awards_df = awards_df[awards_df['owner_name'].isin(current_owners)]
     awards_df = awards_df.sort_values('Power Ranking', ascending=False)
 
     y_vals = awards_df['owner_name']
+
+    # Build "#rank Owner" labels for the y-axis
     y_labels = [
-        f"<span style='font-size:15px;font-weight:bold;line-height:1;'>#{row['Power Ranking']} {owner}</span>"
-        for owner, (_, row) in zip(y_vals, awards_df.iterrows())
+        f"#{int(rank)} {owner}"
+        for owner, rank in zip(awards_df['owner_name'], awards_df['Power Ranking'])
     ]
 
     fig = go.Figure()
 
-    # Champs (positive)
+    # Champs (right)
     fig.add_trace(go.Bar(
         y=y_vals,
         x=awards_df['# League Champs'].astype(int),
@@ -168,7 +156,7 @@ def show_league_insights(st, go, teams_df, matchups_df):
         orientation='h'
     ))
 
-    # Runner-Ups (also positive -> stacks on champs)
+    # Runner-Ups (right)
     fig.add_trace(go.Bar(
         y=y_vals,
         x=awards_df['# League Runner-Ups'].astype(int),
@@ -177,7 +165,7 @@ def show_league_insights(st, go, teams_df, matchups_df):
         orientation='h'
     ))
 
-    # Losers (negative -> stacks to the left of zero)
+    # Losers (left)
     fig.add_trace(go.Bar(
         y=y_vals,
         x=-awards_df['# League Losers'].astype(int),
@@ -187,34 +175,37 @@ def show_league_insights(st, go, teams_df, matchups_df):
     ))
 
     fig.update_layout(
-        barmode='relative',  # positive stacks together; negatives stack on the left
-        yaxis_title='Owner/ Power Ranking',
+        barmode='relative',
         yaxis=dict(
+            title=dict(
+                text='Owner / Power Ranking',
+                standoff=12,                 # distance from tick labels → smaller = closer
+                font=dict(size=14)
+            ),
             tickmode='array',
             tickvals=list(y_vals),
             ticktext=y_labels,
-            title='Owner/ Power Ranking',
-            side='left',
+            tickson='boundaries',
+            ticks='',
             showgrid=True,
-            gridcolor='#bbb',
+            gridcolor='rgba(200,200,200,0.5)',
             gridwidth=1,
-            dtick=1,
-            zeroline=False,
-            automargin=True,
-            tickfont=dict(size=13),
-            ticklabeloverflow='allow',
             categoryorder='array',
             categoryarray=list(y_vals),
-            constrain='range'
+            automargin=True
         ),
         xaxis=dict(
             title='Awards Count',
+            range=[-2, 2],         # <<< clamp axis to -2 through 2
             showgrid=True,
-            gridcolor='#bbb',
+            gridcolor='rgba(200,200,200,0.5)',
             gridwidth=1,
             dtick=1,
+            showline=True,         # <<< draw axis lines
+            mirror=True,           # <<< put them on both top and bottom
+            linecolor='white',     # <<< make them visible
+            linewidth=1,
             ticks='outside',
-            showline=False,
             zeroline=False,
             constrain='range',
             tickfont=dict(size=12),
@@ -228,7 +219,7 @@ def show_league_insights(st, go, teams_df, matchups_df):
             font=dict(size=10, color="white")
         ),
         height=370,
-        margin=dict(l=10, r=10, t=0, b=10),
+        margin=dict(l=20, r=10, t=0, b=10),
         bargap=0.18
     )
 
@@ -255,7 +246,7 @@ def show_league_insights(st, go, teams_df, matchups_df):
     if 'Power Ranking' in final_df.columns:
         final_df = final_df.sort_values('Power Ranking', ascending=True).reset_index(drop=True)
 
-    st.markdown('<div style="font-size:20px;font-weight:600;line-height:1.1;margin-top:15px;margin-bottom:2px;">Owner Performance Summary</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-size:20px;font-weight:600;line-height:1.1;margin-top:15px;margin-bottom:2px;">League Performance Summary</div>', unsafe_allow_html=True)
     
     def make_html_table(df):
         min_col_width = 90
