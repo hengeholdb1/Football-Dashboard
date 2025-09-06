@@ -3,7 +3,7 @@ def show_hall_of_fame(st, teams_df, matchups_df, players_df):
     st.markdown("""
         <style>
         .card {
-            background-color: #222;
+            /* background-color removed */
             border-radius: 8px;
             padding: 8px 12px;
             margin: 4px 0; /* reduce vertical space between cards */

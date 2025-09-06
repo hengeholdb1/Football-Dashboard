@@ -178,7 +178,7 @@ def show_league_insights(st, go, teams_df, matchups_df):
         barmode='relative',
         yaxis=dict(
             title=dict(
-                text='Owner / Power Ranking',
+                text='Power Ranking / Owner',
                 standoff=12,                 # distance from tick labels → smaller = closer
                 font=dict(size=14)
             ),
@@ -226,7 +226,7 @@ def show_league_insights(st, go, teams_df, matchups_df):
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False, 'staticPlot': True})
 
 
-    # ---------- Final table (same HTML look, new order) ----------
+        # ---------- Final table (Streamlit dataframe w/ frozen first col) ----------
     final_df = insights_df.rename(columns={'owner_name': 'Owner Name'})
 
     ordered_cols = [
@@ -242,39 +242,44 @@ def show_league_insights(st, go, teams_df, matchups_df):
     if show_current:
         final_df = final_df[final_df['Owner Name'].isin(current_owners)]
 
-    # Initial sort by Power Ranking ascending (1 = best)
+    # Sort by Power Ranking ascending (1 = best)
     if 'Power Ranking' in final_df.columns:
         final_df = final_df.sort_values('Power Ranking', ascending=True).reset_index(drop=True)
 
-    st.markdown('<div style="font-size:20px;font-weight:600;line-height:1.1;margin-top:15px;margin-bottom:2px;">League Performance Summary</div>', unsafe_allow_html=True)
-    
-    def make_html_table(df):
-        min_col_width = 90
-        col_width = f"{max(min_col_width, 100/len(df.columns)):.2f}px"
-        hdr = ''.join(
-            f'<th style="min-width:{col_width};padding:4px;background-color:#333;color:white;'
-            f'border:1px solid #555;position:sticky;top:0;z-index:2;font-size:12px;'
-            f'text-align:center;">{col}</th>'
-            for col in df.columns
-        )
-        body = ''
-        for _, vals in df.iterrows():
-            body += '<tr>'
-            for j, val in enumerate(vals):
-                if j == 0:
-                    body += f'<td style="min-width:{col_width};text-align:center;padding:4px;background-color:#222;color:white;border:1px solid #333;position:sticky;left:0;z-index:1;font-size:12px;">{val}</td>'
-                else:
-                    body += f'<td style="min-width:{col_width};text-align:center;padding:4px;background-color:#1a1a1a;color:white;border:1px solid #333;font-size:12px;">{val}</td>'
-            body += '</tr>'
-        return f'''
-        <div style="overflow-x:auto;max-width:100vw;">
-        <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:{min_col_width*len(df.columns)}px;">
-            <thead><tr>{hdr}</tr></thead><tbody>{body}</tbody>
-        </table>
-        <div style="font-size:11px;color:#aaa;margin-top:4px;text-align:right;">
-            ↔️ Table is scrollable
-        </div>
-        </div>
-        '''
+    st.markdown(
+        '<div style="font-size:20px;font-weight:600;line-height:1.1;margin-top:15px;margin-bottom:2px;">'
+        'League Summary</div>',
+        unsafe_allow_html=True
+    )
 
-    st.markdown(make_html_table(final_df), unsafe_allow_html=True)
+    # Fit height to show all rows (similar to sample)
+    n_rows = len(final_df)
+    row_px = 34
+    header_px = 40
+    padding_px = 16
+    max_px = 1200
+    fit_height = min(max_px, header_px + n_rows * row_px + padding_px)
+
+    st.dataframe(
+        final_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Owner Name": st.column_config.TextColumn("Owner Name", pinned="left"),
+            "Power Ranking": st.column_config.NumberColumn(format="%d"),
+            "# League Champs": st.column_config.NumberColumn(format="%d"),
+            "# League Runner-Ups": st.column_config.NumberColumn(format="%d"),
+            "# League Losers": st.column_config.NumberColumn(format="%d"),
+            "Total Seasons": st.column_config.NumberColumn(format="%d"),
+            "Avg Regular Season Rank": st.column_config.NumberColumn(format="%.2f"),
+            "Win %": st.column_config.NumberColumn(format="%.1f%%"),
+            "Playoff Appearance %": st.column_config.NumberColumn(format="%.1f%%"),
+            "Avg Waiver Moves/Year": st.column_config.NumberColumn(format="%.2f"),
+            "Avg Trades/Year": st.column_config.NumberColumn(format="%.2f"),
+            "Avg FAAB Used/Year": st.column_config.NumberColumn(format="%.2f"),
+            "Avg High Scores/Year": st.column_config.NumberColumn(format="%.2f"),
+            "Avg Low Scores/Year": st.column_config.NumberColumn(format="%.2f"),
+        },
+        height=fit_height,
+    )
+

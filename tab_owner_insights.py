@@ -148,22 +148,22 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
             grid-template-columns: repeat(3, minmax(0,1fr));
             column-gap:15px; 
             row-gap:4px;        /* no vertical gap between rows */
-            margin:0;         /* remove top/bottom margin */
-            padding:0;        /* remove padding */
+            margin:0;           /* remove top/bottom margin */
+            padding:0;          /* remove padding */
           }}
           .card {{
             background:transparent; 
             border:none; 
             padding:0; 
-            color:#fff; 
             min-width:0;
             display:flex; 
             flex-direction:column;
           }}
           .label {{
             font-size:14px; 
-            font-weight:600; 
-            border-bottom:1px solid #666;
+            font-weight:500; 
+            color:#aaa;               /* lighter gray label */
+            border-bottom:1px solid #555;  /* gray underline */
             padding-bottom:1px; 
             margin-bottom:2px; 
             white-space:nowrap; 
@@ -173,11 +173,11 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
             width:100%;
           }}
           .value {{
-            color:#d4af37; 
+            color:#fff;               /* bold white values */
             font-size:20px; 
-            font-weight:900; 
+            font-weight:800; 
             line-height:1.2;
-            margin-top:0;     /* tighter */
+            margin-top:0;             /* tighter spacing */
             white-space:nowrap; 
             overflow:hidden; 
             text-overflow:ellipsis; 
@@ -185,7 +185,7 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
           }}
           .sub {{
             font-size:10px; 
-            opacity:.8; 
+            color:#999;               /* subtle gray subtext */
             margin-top:1px; 
             white-space:nowrap; 
             overflow:hidden;
@@ -200,6 +200,7 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
         </style>
         <div class="cards">{cards_html}</div>
         """
+
         st_html(html, height=60 * len(rows))
 
     # Format values for display
@@ -443,8 +444,8 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
         st.markdown('<div style="font-size:20px;font-weight:600;margin-top:10px;margin-bottom:0px;line-height:1;">Head-to-Head Rivalry Win Rate</div>', unsafe_allow_html=True)
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-    # ----------------------------------------------------------------
-    # Team Summary (with FAAB Used)
+        # ----------------------------------------------------------------
+    # Team Summary (dataframe w/ pinned first col + link)
     # ----------------------------------------------------------------
     # 1) Trim to just flags we need
     matchups_flags_df = matchups_df[['team_key','is_playoffs','high_score_flag','low_score_flag']].copy()
@@ -471,7 +472,7 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
     summary['points_against_total'] = pd.to_numeric(summary['points_against_total'], errors='coerce')
     summary['points_diff'] = (summary['points_for_total'] - summary['points_against_total']).fillna(0).astype(int)
 
-    # 6) force ints (include FAAB)
+    # 6) force ints (exclude FAAB so we can render it as text)
     for c in [
         'regular_season_ranking','wins','losses','points_for_total','points_against_total',
         'number_of_waiver_moves','number_of_trades','high_scores','low_scores'
@@ -501,73 +502,73 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
 
     # --- Force FAAB Used to literal text (no decimals, show "NA" when missing) ---
     def _faab_to_text(x):
-        # treat true-missing as "NA"
         if x is None or (isinstance(x, float) and np.isnan(x)) or (x is pd.NA):
             return "NA"
-        # strings: keep literal, trimmed
         if isinstance(x, str):
             s = x.strip()
-            # if it's a numeric-looking string like "12.0", render humanly
             try:
                 f = float(s)
-                return str(int(f)) if f.is_integer() else s  # keep original if it had decimals intentionally
+                return str(int(f)) if f.is_integer() else s
             except Exception:
-                return s or "NA"   # empty string -> "NA"
-        # ints
+                return s or "NA"
         if isinstance(x, (int, np.integer)):
             return str(int(x))
-        # floats
         if isinstance(x, float):
             return str(int(x)) if x.is_integer() else str(x).rstrip('0').rstrip('.')
-        # fallback
         return str(x)
 
-    # if the column exists post-rename, convert it to clean text
     if 'FAAB Used' in display.columns:
         display['FAAB Used'] = display['FAAB Used'].apply(_faab_to_text).astype(object)
+
+    # Build a small link column from Team URL
+    display['Team URL (link)'] = display['Team URL'].map(
+        lambda u: (None if (pd.isna(u) or str(u).strip() == "") else str(u).strip())
+    )
 
     ordered_cols = [
         'Year','Team Name','League Result','Regular Season Rank','Wins','Losses',
         'Points For (Total)','Points Against (Total)','Points Difference',
         'Waiver Moves','FAAB Used','Trades',     
-        '# High Scores','# Low Scores','Draft Grade','Team URL'
+        '# High Scores','# Low Scores','Draft Grade','Team URL (link)'
     ]
     display = display[ordered_cols]
 
-    st.markdown('<div style="font-size:20px;font-weight:600;margin-top:8px;margin-bottom:4px;">Team Summary</div>',
-                unsafe_allow_html=True)
+    st.markdown(
+        '<div style="font-size:20px;font-weight:600;margin-top:8px;margin-bottom:4px;">Team Summary</div>',
+        unsafe_allow_html=True
+    )
 
-    def make_html_table(df):
-        if df.empty:
-            return '<div style="color:#aaa;">No rows to display.</div>'
-        min_col_width = 110
-        hdr = ''.join(
-            f'<th style="min-width:{min_col_width}px;padding:6px;background:#333;color:#fff;'
-            f'border:1px solid #555;position:sticky;top:0;z-index:2;font-size:12px;text-align:center;">{col}</th>'
-            for col in df.columns
-        )
-        body = ''
-        for _, row in df.iterrows():
-            body += '<tr>'
-            for j, val in enumerate(row):
-                val = '' if pd.isna(val) else val
-                if j == 0:
-                    body += f'<td style="min-width:{min_col_width}px;text-align:center;padding:6px;background:#222;color:#fff;border:1px solid #333;position:sticky;left:0;z-index:1;font-size:12px;">{val}</td>'
-                else:
-                    if df.columns[j] == 'Team URL' and isinstance(val, str) and val.strip():
-                        cell = f'<a href="{val}" target="_blank" style="color:#6cf;text-decoration:none;">Link</a>'
-                    else:
-                        cell = val
-                    body += f'<td style="min-width:{min_col_width}px;text-align:center;padding:6px;background:#1a1a1a;color:#fff;border:1px solid #333;font-size:12px;">{cell}</td>'
-            body += '</tr>'
-        return f'''
-        <div style="overflow-x:auto;max-width:100vw;">
-          <table style="width:100%;border-collapse:collapse;">
-            <thead><tr>{hdr}</tr></thead>
-            <tbody>{body}</tbody>
-          </table>
-          <div style="font-size:11px;color:#aaa;margin-top:4px;text-align:right;">↔️ Table is scrollable</div>
-        </div>
-        '''
+    # Compute a height that fits all rows (approximate)
+    n_rows = len(display)
+    row_px = 34
+    header_px = 40
+    padding_px = 16
+    max_px = 1200
+    fit_height = min(max_px, header_px + n_rows * row_px + padding_px)
 
-    st.markdown(make_html_table(display), unsafe_allow_html=True)
+    st.dataframe(
+        display,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            # Pin the first column (Year). If you'd rather pin Team Name, move pinned="left" there.
+            "Year": st.column_config.NumberColumn(format="%d", pinned="left"),
+            "Team Name": st.column_config.TextColumn("Team Name"),
+            "League Result": st.column_config.TextColumn("League Result"),
+            "Regular Season Rank": st.column_config.NumberColumn(format="%d"),
+            "Wins": st.column_config.NumberColumn(format="%d"),
+            "Losses": st.column_config.NumberColumn(format="%d"),
+            "Points For (Total)": st.column_config.NumberColumn(format="%d"),
+            "Points Against (Total)": st.column_config.NumberColumn(format="%d"),
+            "Points Difference": st.column_config.NumberColumn(format="%d"),
+            "Waiver Moves": st.column_config.NumberColumn(format="%d"),
+            # Keep FAAB as text to avoid numeric coercion/decimals
+            "FAAB Used": st.column_config.TextColumn("FAAB Used"),
+            "Trades": st.column_config.NumberColumn(format="%d"),
+            "# High Scores": st.column_config.NumberColumn(format="%d"),
+            "# Low Scores": st.column_config.NumberColumn(format="%d"),
+            "Draft Grade": st.column_config.TextColumn("Draft Grade"),
+            "Team URL (link)": st.column_config.LinkColumn("Team URL", display_text="Link"),
+        },
+        height=fit_height,
+    )
