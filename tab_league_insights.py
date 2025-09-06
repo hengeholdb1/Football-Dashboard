@@ -1,7 +1,7 @@
 import pandas as pd  # make sure this is at top of file
 
 def show_league_insights(st, go, teams_df, matchups_df):
-    st.markdown('<div style="font-size:20px;font-weight:600;margin-bottom:0;">League Awards</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-size:20px;font-weight:600;margin-bottom:0;">League Trophy Count</div>', unsafe_allow_html=True)
 
     # ---------- Base ranking & win% ----------
     ranking_df = teams_df[
