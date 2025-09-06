@@ -38,14 +38,14 @@ def show_hall_of_fame(st, teams_df, matchups_df, players_df):
     result_table = (
         wl_df.pivot(index="year", columns="league_result", values="owner_name")
              .rename(columns={
-                 "Winner": "🥇 Winner",
+                 "Winner": "🏆 Winner",
                  "Runner-up": "🥈 Runner-up",
                  "Loser": "🗑️ Loser"
              })
              .reset_index()
              .rename(columns={"year": "Year"})
     )
-    clean_table = result_table[["Year", "🥇 Winner", "🥈 Runner-up", "🗑️ Loser"]]
+    clean_table = result_table[["Year", "🏆 Winner", "🥈 Runner-up", "🗑️ Loser"]]
 
     def make_html_table(df):
         hdr = ''.join(
@@ -76,7 +76,7 @@ def show_hall_of_fame(st, teams_df, matchups_df, players_df):
     st.markdown(
     '<div style="font-size:25px;font-weight:600;line-height:1.1;margin-top:15px;margin-bottom:2px;">All Time Legends</div>',
     unsafe_allow_html=True)
-    
+
     col11, col4, col1, col2, col3, col8 = st.columns(6, gap="small")
 
     # Best Avg Regular Season Rank

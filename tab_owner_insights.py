@@ -1,201 +1,141 @@
 import pandas as pd
 import numpy as np
+import plotly.graph_objects as go
+import plotly.express as px
+from streamlit.components.v1 import html as st_html
 
-def show_owner_insights(st, go, teams_df, matchups_df):
 
+def show_owner_insights(st, go_unused, teams_df, matchups_df):
     # -----------------------------
-    # Normalize columns & dtypes
+    # Normalize columns & aliases
     # -----------------------------
     for df in (teams_df, matchups_df):
         df.columns = df.columns.str.strip().str.lower()
-    # helpful aliases if your sheet uses slightly different names
-    alias_map = {
+
+    # === Replace the single alias_map with two maps ===
+    team_alias_map = {
+        'teamkey': 'team_key',
+        'owner': 'owner_name',
+        'league_result_final': 'league_result',
+        'regular_season_rank': 'regular_season_ranking',
+        'points_for': 'points_for_total',            # <- totals live in teams_df
+        'points_against': 'points_against_total',    # <- totals live in teams_df
+        'waiver_moves': 'number_of_waiver_moves',
+        'trades': 'number_of_trades',
+        'url': 'team_url',
+        'draft_report_card': 'draft_grade',
+        'season': 'year'
+    }
+    matchup_alias_map = {
         'teamkey': 'team_key',
         'opponentteamkey': 'opponent_team_key',
         'owner': 'owner_name',
         'league_result_final': 'league_result',
         'regular_season_rank': 'regular_season_ranking',
-        'points_for': 'points_for_total',
-        'points_against': 'points_against_total',
-        'waiver_moves': 'number_of_waiver_moves',
-        'trades': 'number_of_trades',
-        'url': 'team_url',
-        'draft_report_card': 'draft_grade'
+        # IMPORTANT: do NOT rename weekly points here
+        'url': 'matchup_url',
+        'season': 'year'
     }
-    teams_df = teams_df.rename(columns={k:v for k,v in alias_map.items() if k in teams_df.columns})
-    matchups_df = matchups_df.rename(columns={k:v for k,v in alias_map.items() if k in matchups_df.columns})
 
-    # Strongly-expected columns (create if missing so visuals don’t die)
-    need_cols_teams = [
-        'year','team_key','team_name','owner_name','league_result','regular_season_ranking','wins','losses',
-        'points_for_total','points_against_total','number_of_waiver_moves','number_of_trades','team_url','draft_grade'
-    ]
-    for c in need_cols_teams:
-        if c not in teams_df.columns:
-            teams_df[c] = np.nan
+    # Apply them separately
+    teams_df    = teams_df.rename(columns={k:v for k,v in team_alias_map.items() if k in teams_df.columns})
+    matchups_df = matchups_df.rename(columns={k:v for k,v in matchup_alias_map.items() if k in matchups_df.columns})
 
-    need_cols_matchups = [
-        'year','week','team_key','opponent_team_key','is_playoffs','high_score_flag','low_score_flag','points_for','points_against'
-    ]
-    for c in need_cols_matchups:
-        if c not in matchups_df.columns:
-            matchups_df[c] = np.nan
+    for df in (teams_df, matchups_df):
+        if 'team_key' in df.columns: df['team_key'] = df['team_key'].astype(str).str.strip()
+        if 'opponent_team_key' in df.columns: df['opponent_team_key'] = df['opponent_team_key'].astype(str).str.strip()
+        if 'year' in df.columns: df['year'] = pd.to_numeric(df['year'], errors='coerce').astype('Int64')
+        if 'owner_name' in df.columns: df['owner_name'] = df['owner_name'].astype(str).str.strip()
 
-    # Coerce numeric types where helpful
-    for df, cols in [(teams_df,['year','regular_season_ranking','wins','losses','points_for_total','points_against_total',
-                                'number_of_waiver_moves','number_of_trades']),
-                     (matchups_df,['year','week','is_playoffs','high_score_flag','low_score_flag','points_for','points_against'])]:
-        for c in cols:
-            if c in df.columns:
-                df[c] = pd.to_numeric(df[c], errors='coerce')
+    # Minimal numeric coercions we use later
+    for c in ['regular_season_ranking','wins','losses','points_for_total','points_against_total',
+              'number_of_waiver_moves','number_of_trades']:
+        if c in teams_df.columns:
+            teams_df[c] = pd.to_numeric(teams_df[c], errors='coerce')
+
+    for c in ['is_playoffs','high_score_flag','low_score_flag','week']:
+        if c in matchups_df.columns:
+            matchups_df[c] = pd.to_numeric(matchups_df[c], errors='coerce')
 
     # -----------------------------
-    # Build opponent owner join
+    # Select Box for Owner
     # -----------------------------
-    # (1) attach owner_name to matchups via team_key
-    owner_map_self = teams_df[['team_key','owner_name','year']].drop_duplicates()
-    m = matchups_df.merge(owner_map_self, on=['team_key','year'], how='left', suffixes=('',''))
-
-    # (2) attach opponent owner_name via opponent_team_key
-    owner_map_opp = teams_df[['team_key','owner_name','year']].drop_duplicates().rename(
-        columns={'team_key':'opponent_team_key','owner_name':'opponent_owner_name'}
-    )
-    m = m.merge(owner_map_opp, on=['opponent_team_key','year'], how='left')
-
-    # Ensure flags are ints (0/1) for grouping
-    for flag in ['high_score_flag','low_score_flag']:
-        if flag in m.columns:
-            m[flag] = m[flag].fillna(0).astype(int)
-
-    # -----------------------------
-    # UI: Header & Owner filter
-    # -----------------------------
-    st.markdown('<div style="font-size:25px;font-weight:600;line-height:.5;margin-top:5px;margin-bottom:0px;">Owner Metrics</div>',
-    unsafe_allow_html=True)
-    #st.markdown('<div style="font-size:20px;font-weight:700;margin:0;">Owner Insights</div>', unsafe_allow_html=True)
-    all_owners = sorted(teams_df['owner_name'].dropna().unique().tolist())
-    default_owner = all_owners[0] if all_owners else None
-
-    # Tighten spacing specifically around the selectbox ("slicer")
-    # Put this RIGHT BEFORE you render the selectbox
-    st.markdown("""
-    <style>
-    /* Compact the whole selectbox block */
-    div[data-testid="stSelectbox"]{
-    margin: 0 !important;
-    padding: 0 !important;
-    line-height: 1 !important;            /* <= compress block line height */
-    }
-
-    /* Make everything inside the block use tight line-height */
-    div[data-testid="stSelectbox"] *{
-    line-height: 1.05 !important;         /* <= effective for trimming top/bottom */
-    }
-
-    /* Hide the label completely (we use the placeholder) */
-    div[data-testid="stSelectbox"] label{
-    display: none !important;
-    }
-
-    /* The clickable control */
-    div[data-testid="stSelectbox"] div[role="combobox"]{
-    min-height: 32px;                      /* shorter control */
-    height: 32px;
-    padding-top: 0 !important;
-    padding-bottom: 0 !important;
-    line-height: 32px !important;          /* center text vertically */
-    }
-
-    /* Text/placeholder inside the control */
-    div[data-testid="stSelectbox"] div[role="combobox"] > div:first-child,
-    div[data-testid="stSelectbox"] span,
-    div[data-testid="stSelectbox"] input{
-    line-height: 1.05 !important;          /* tighter text lines */
-    }
-
-    /* Dropdown menu items (when opened) */
-    ul[role="listbox"] li{
-    line-height: 1.1 !important;
-    padding-top: 4px;
-    padding-bottom: 4px;
-    }
-
-    /* Optional tiny caption with no extra space */
-    .slicer-caption{
-    font-size: 12px;
-    color: #bbb;
-    margin: 0 !important;
-    line-height: 1 !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # Optional caption (remove if you want absolutely nothing above it)
-    # st.markdown('<div class="slicer-caption">Owner</div>', unsafe_allow_html=True)
-
-    owner = st.selectbox(
-        "",  # no visible label
-        options=all_owners,
-        index=(all_owners.index(default_owner) if default_owner in all_owners else 0) if all_owners else None,
-        placeholder="Select owner",
-        label_visibility="collapsed"
+    # --- Owner selector with placeholder ---
+    owners = sorted(teams_df["owner_name"].dropna().unique().tolist())
+    owner_options = ["Select an owner..."] + owners
+    selected_owner_label = st.selectbox(
+        "Select Owner:",
+        owner_options,
+        index=0
     )
 
-    # Slices
-    teams_owner_all = teams_df[teams_df['owner_name'] == owner].copy()                # includes 2017 (for champs/runner/loser cards)
-    teams_owner = teams_owner_all[teams_owner_all['year'] != 2017].copy()             # excludes 2017 (for all other visuals/metrics)
-    m_owner = m[(m['owner_name'] == owner) & (m['year'] != 2017)].copy()
+    if selected_owner_label == "Select an owner...":
+        st.info("Please select an owner to continue.")
+        return  # use st.stop() if you're not inside a function
+
+    owner = selected_owner_label
+
+    # Optional slices (keep if you use them later)
+    teams_owner_all = teams_df[teams_df["owner_name"] == owner].copy()                # includes 2017 for cards
+    teams_owner = teams_owner_all[teams_owner_all["year"] != 2017].copy()             # excludes 2017 for other visuals
+
 
     # -----------------------------
-    # Card Row 1: Championships / Runner-ups / Losers  (INCLUDES 2017)
+    # Cards (styled like example)
     # -----------------------------
+    from streamlit.components.v1 import html as st_html
+
     get_count = lambda res: int(teams_owner_all[teams_owner_all['league_result'].astype(str).str.lower() == res].shape[0])
     champs = get_count('winner')
     runnerups = get_count('runner-up')
     losers = get_count('loser')
 
-    # -----------------------------
-    # Card Row 2: Avg regular season rank, Win %, Playoff appearance % (EXCLUDES 2017)
-    # -----------------------------
-    # Avg regular season rank
-    avg_rank = np.nan
-    if 'regular_season_ranking' in teams_owner.columns and not teams_owner.empty:
-        avg_rank = round(teams_owner['regular_season_ranking'].dropna().astype(float).mean(), 2)
+    avg_rank = round(teams_owner['regular_season_ranking'].dropna().astype(float).mean(), 2) if not teams_owner.empty else np.nan
 
-    # Win %
     win_pct = np.nan
-    if {'wins','losses'}.issubset(teams_owner.columns):
-        tmp = teams_owner[['wins','losses']].dropna()
-        if not tmp.empty:
-            total_wins = tmp['wins'].sum()
-            total_losses = tmp['losses'].sum()
-            if (total_wins + total_losses) > 0:
-                win_pct = round(100 * total_wins / (total_wins + total_losses), 1)
+    if {'wins','losses'}.issubset(teams_owner.columns) and not teams_owner.empty:
+        tw, tl = teams_owner['wins'].sum(), teams_owner['losses'].sum()
+        if (tw + tl) > 0:
+            win_pct = round(100 * tw / (tw + tl), 1)
 
-    # Playoff appearance % (count seasons with league_result in playoffs-ish) / (seasons excluding 2017)
     playoff_mask = teams_owner['league_result'].astype(str).str.lower().isin(['playoffs','runner-up','winner'])
     playoff_appearances = int(playoff_mask.sum())
     total_seasons_excl_2017 = int(teams_owner['year'].nunique())
     playoff_pct = round(100 * playoff_appearances / total_seasons_excl_2017, 1) if total_seasons_excl_2017 > 0 else np.nan
 
-    # -----------------------------
-    # Render cards
-    # -----------------------------
-    from streamlit.components.v1 import html as st_html
+    def _fmt_int(v):
+        try:
+            x = pd.to_numeric(v, errors="coerce")
+            return "-" if pd.isna(x) else str(int(round(x)))
+        except Exception:
+            return "-"
+
+    def _fmt_pct(v):
+        try:
+            x = pd.to_numeric(v, errors="coerce")
+            return "-" if pd.isna(x) else f"{round(float(x), 1)}%"
+        except Exception:
+            return "-"
+
+    def _fmt_float(v, nd=2):
+        try:
+            x = pd.to_numeric(v, errors="coerce")
+            if pd.isna(x):
+                return "-"
+            # tidy trailing zeros
+            s = f"{x:.{nd}f}"
+            return s.rstrip("0").rstrip(".")
+        except Exception:
+            return "-"
 
     def render_cards_block(rows):
-        """
-        rows: list of rows; each row is a list of (label, value[, sub]) tuples.
-        We flatten to one 3-col grid so columns stay the same width across both rows.
-        """
         flat = [t for row in rows for t in row]
-
         cards_html = "".join(
             f"""
             <div class="card">
-            <div class="label">{lbl}</div>
-            <div class="value">{('-' if (val is None or (isinstance(val,float) and pd.isna(val))) else val)}</div>
-            {f'<div class="sub">{sub}</div>' if (len(tup)>2 and (sub:=tup[2])) else ''}
+              <div class="label">{lbl}</div>
+              <div class="value">{val}</div>
+              {f'<div class="sub">{sub}</div>' if (len(tup)>2 and (sub:=tup[2])) else ''}
             </div>
             """
             for tup in flat for lbl,val,*_ in [tup]
@@ -203,291 +143,343 @@ def show_owner_insights(st, go, teams_df, matchups_df):
 
         html = f"""
         <style>
-        /* one grid for all six cards -> identical column widths */
-        .cards {{
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr)); /* equal columns regardless of label length */
-            column-gap: 6px;
-            row-gap: 8px;
-            margin: 4px 0;
-        }}
-        .card {{
-            background: #222;
-            border: 1px solid #333;
-            border-radius: 10px;
-            padding: 2px 10px;
-            color: #fff;
-            box-sizing: border-box;
-            min-width: 0; /* allow shrinking within the grid column */
-        }}
-        .label {{ font-size: 10px; line-height: 1.3; opacity: 0.9; }}
-        .value {{ font-size: 20px; font-weight: 700; line-height: 1.1; margin-top: 4px; }}
-        .sub   {{ font-size: 10px; opacity: 0.9; margin-top: 2px; }}
-        .label, .value, .sub {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
-
-        /* keep 3 across on phones too */
-        @media (max-width: 480px) {{
-            .value {{ font-size: 18px; }}
-            .label {{ font-size: 12px; }}
-            .sub   {{ font-size: 9px;  }}
-        }}
+          .cards {{
+            display:grid;
+            grid-template-columns: repeat(3, minmax(0,1fr));
+            column-gap:15px; 
+            row-gap:4px;        /* no vertical gap between rows */
+            margin:0;         /* remove top/bottom margin */
+            padding:0;        /* remove padding */
+          }}
+          .card {{
+            background:transparent; 
+            border:none; 
+            padding:0; 
+            color:#fff; 
+            min-width:0;
+            display:flex; 
+            flex-direction:column;
+          }}
+          .label {{
+            font-size:14px; 
+            font-weight:600; 
+            border-bottom:1px solid #666;
+            padding-bottom:1px; 
+            margin-bottom:2px; 
+            white-space:nowrap; 
+            overflow:hidden;
+            text-overflow:ellipsis; 
+            text-align:left; 
+            width:100%;
+          }}
+          .value {{
+            color:#d4af37; 
+            font-size:20px; 
+            font-weight:900; 
+            line-height:1.2;
+            margin-top:0;     /* tighter */
+            white-space:nowrap; 
+            overflow:hidden; 
+            text-overflow:ellipsis; 
+            text-align:left;
+          }}
+          .sub {{
+            font-size:10px; 
+            opacity:.8; 
+            margin-top:1px; 
+            white-space:nowrap; 
+            overflow:hidden;
+            text-overflow:ellipsis; 
+            text-align:left;
+          }}
+          @media (max-width:480px){{
+            .label{{font-size:12px;}}
+            .value{{font-size:18px;}}
+            .sub{{font-size:9px;}}
+          }}
         </style>
-
-        <div class="cards">
-        {cards_html}
-        </div>
+        <div class="cards">{cards_html}</div>
         """
+        st_html(html, height=60 * len(rows))
 
-        # height: ~86px per row
-        height = 55 * len(rows)
-        st_html(html, height=height)
+    # Format values for display
+    champs_s      = _fmt_int(champs)
+    runnerups_s   = _fmt_int(runnerups)
+    losers_s      = _fmt_int(losers)
+    avg_rank_s    = _fmt_float(avg_rank, nd=2)
+    win_pct_s     = _fmt_pct(win_pct)            # win_pct is a number like 65.3
+    playoff_pct_s = _fmt_pct(playoff_pct)        # playoff_pct is a number like 58.3
 
-    # --- Use it like this (same metrics you already compute) ---
+    # Render two rows as requested
     render_cards_block([
-        [("🏆 Champs", champs), ("🥈 Runner-ups", runnerups), ("💀 Losers", losers)],
-        [("Avg Season Rank", avg_rank), ("Win %", f"{win_pct}%" if pd.notna(win_pct) else "-"),
-        ("Playoff Appear %", f"{playoff_pct}%" if pd.notna(playoff_pct) else "-")]
+        [("Champs", champs_s), ("Runner-ups", runnerups_s), ("Losers", losers_s)],
+        [("Avg Season Rank", avg_rank_s), ("Win %", win_pct_s), ("Playoff Appear %", playoff_pct_s)],
     ])
 
     # -----------------------------
-    # Line graph: Regular-season rank by year (EXCLUDES 2017)
+    # Line chart: Regular-season rank by year (excl 2017) with emoji markers
     # -----------------------------
-    # ---- Line graph: Regular-season rank by year (EXCLUDES 2017) ----
-    # ---- Line graph: Regular-season rank by year (EXCLUDES 2017) ----
-    # ---- Line graph: Regular-season rank by year (EXCLUDES 2017) ----
-    line_df = teams_owner[['year', 'regular_season_ranking']].dropna().copy()
-    line_df['year'] = pd.to_numeric(line_df['year'], errors='coerce').astype('Int64')
-
-    # remove 2017 entirely
+    line_df = teams_owner[['year','regular_season_ranking','league_result']].copy()
+    line_df = line_df.dropna(subset=['regular_season_ranking'])
     line_df = line_df[line_df['year'] != 2017].sort_values('year')
 
-    if not line_df.empty:
-        st.markdown(
-            '<div style="font-size:20px;font-weight:600;line-height:1.1;margin:0;">Regular Season Ranking by Year</div>',
-            unsafe_allow_html=True
-        )
+    def result_emoji(x: str) -> str:
+        s = '' if pd.isna(x) else str(x).strip().lower()
+        if s == 'winner':
+            return '🏆'
+        if s in ('runner-up', 'runner up', 'runnerup'):
+            return '🥈'
+        if s == 'loser':
+            return '🗑️'
+        if s in ('playoffs', 'playoff'):
+            return '✅'
+        if s in ('missed playoffs', 'no playoffs', 'did not qualify', 'dnq', 'consolation', 'toilet bowl'):
+            return '❌'
+        return '❌'  # default to "missed playoffs" if unknown
 
-        # categorical labels (no gap for missing years)
-        line_df['year_label'] = line_df['year'].astype(int).astype(str)
+    if not line_df.empty:
+        st.markdown('<div style="font-size:20px;font-weight:600;margin-top:-10px; margin-bottom:-10px; line-height:1;">Performance by Year</div>', unsafe_allow_html=True)
+
+        line_df['year_str'] = line_df['year'].astype(int).astype(str)
+        line_df['emoji'] = line_df['league_result'].map(result_emoji)
+
         ticks = [str(y) for y in sorted(line_df['year'].dropna().astype(int).unique())]
 
         fig_rank = go.Figure()
+
+        # Base line (no markers)
         fig_rank.add_trace(go.Scatter(
-            x=line_df['year_label'],          # <- categorical axis
+            x=line_df['year_str'],
             y=line_df['regular_season_ranking'],
-            mode='lines+markers',
-            marker=dict(size=6),
-            line=dict(width=2)
+            mode='lines',
+            line=dict(width=2),
+            hovertemplate='Year: %{x}<br>Rank: %{y:.0f}<extra></extra>',
+            name=''
         ))
 
-        # X-axis: categories only (2016, 2018, 2019, ...), no 2017 placeholder
+        # Emoji at each point (acts like a "marker")
+        fig_rank.add_trace(go.Scatter(
+            x=line_df['year_str'],
+            y=line_df['regular_season_ranking'],
+            mode='text',
+            text=line_df['emoji'],
+            textposition='middle center',
+            textfont=dict(
+                size=16,
+                family="Segoe UI Emoji, Noto Color Emoji, Apple Color Emoji, sans-serif"
+            ),
+            hoverinfo='skip',   # avoid duplicate hover
+            showlegend=False,
+            name=''
+        ))
+
         fig_rank.update_xaxes(
             type='category',
             categoryorder='array',
             categoryarray=ticks,
             tickmode='array',
             tickvals=ticks,
+            ticktext=ticks,     # just the years (no emojis under)
             fixedrange=True,
-            title_text="Year"
+            showline=True,
+            linecolor="#444",
+            linewidth=1,
+            automargin=True
         )
-
-        # Y-axis: fixed 1..12, reversed (1 at top)
         fig_rank.update_yaxes(
-            range=[12, 0],
+            range=[12.5, 0],
             dtick=1,
-            title_text="Rank (1 = best)",
-            fixedrange=True
+            title_text="Regular Season Rank",
+            fixedrange=True,
+            gridcolor="#444"
         )
+        # No extra bottom margin needed since emojis are on the points
+        fig_rank.update_layout(height=210, margin=dict(l=8, r=8, t=0, b=8), showlegend=False)
 
-        fig_rank.update_layout(
-            height=200,
-            margin=dict(l=8, r=8, t=0, b=8),
-            showlegend=False
-        )
+        st.markdown("""
+        <style>
+          .emoji-legend { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:4px;}
+          .emoji-legend .item { display:flex; align-items:center; gap:2px; background:#222; border:1px solid #333; padding:2px 4px; border-radius:8px; font-size:10px; color:#ddd; }
+          .emoji-legend .emoji { font-size:14px; line-height:1; }
+        </style>
+        <div class="emoji-legend">
+          <div class="item"><span class="emoji">🏆</span><span>Champ</span></div>
+          <div class="item"><span class="emoji">🥈</span><span>2nd</span></div>
+          <div class="item"><span class="emoji">🗑️</span><span>Loser</span></div>
+          <div class="item"><span class="emoji">✅</span><span>Playoffs</span></div>
+          <div class="item"><span class="emoji">❌</span><span>No Playoffs</span></div>
+        </div>
+        """, unsafe_allow_html=True)
 
         st.plotly_chart(fig_rank, use_container_width=True, config={'displayModeBar': False})
-    else:
-        st.info("No ranking data to plot (after excluding 2017).")
-
 
     # -----------------------------
-    # Heatmap: Win% vs other owners (regular season only, EXCLUDES 2017)
+    # Box & Whisker: Weekly Points by Year (force-drop 2017 via Categorical)
     # -----------------------------
-    # ---- Build & preview heatmap-ready dataframe ----
-    # ---- Build heatmap source with matchups_df as BASE (2 joins back to teams_df) ----
-     # --- Minimal: matchups_df LEFT JOIN teams_df (owner_name) on team_key ---
-
-    # --- Build matchups + owner_name + opponent_owner_name table ---
-    def add_owner_and_opponent(teams_df, matchups_df):
-        import pandas as pd
-
-        teams = teams_df.copy()
-        mtchs = matchups_df.copy()
-        teams.columns = teams.columns.str.strip().str.lower()
-        mtchs.columns = mtchs.columns.str.strip().str.lower()
-
-        # Normalize key names
-        teams_alias = {'teamkey': 'team_key', 'owner': 'owner_name', 'season': 'year'}
-        mtchs_alias = {'teamkey': 'team_key', 'opponentteamkey': 'opponent_team_key', 'season': 'year'}
-        teams.rename(columns={k:v for k,v in teams_alias.items() if k in teams.columns}, inplace=True)
-        mtchs.rename(columns={k:v for k,v in mtchs_alias.items() if k in mtchs.columns}, inplace=True)
-
-        # Ensure join key type matches
-        if 'team_key' in teams.columns: teams['team_key'] = teams['team_key'].astype(str)
-        if 'team_key' in mtchs.columns: mtchs['team_key'] = mtchs['team_key'].astype(str)
-        if 'opponent_team_key' in mtchs.columns: mtchs['opponent_team_key'] = mtchs['opponent_team_key'].astype(str)
-
-        # Map team owner
-        owner_map = teams[['team_key', 'owner_name']].dropna().drop_duplicates()
-        out = mtchs.merge(owner_map, on='team_key', how='left')
-
-        # Map opponent owner
-        opp_map = teams[['team_key', 'owner_name']].dropna().drop_duplicates()
-        opp_map = opp_map.rename(columns={'team_key': 'opponent_team_key', 'owner_name': 'opponent_owner_name'})
-        out = out.merge(opp_map, on='opponent_team_key', how='left')
-
-        # Reorder some useful fields
-        preferred = [c for c in [
-            'year','week','team_key','owner_name',
-            'opponent_team_key','opponent_owner_name',
-            'is_playoffs','week_result','points_for','points_against'
-        ] if c in out.columns]
-        out = out[preferred + [c for c in out.columns if c not in preferred]]
-
-        return out
-
-
-    # --- Use it ---
-    joined_full = add_owner_and_opponent(teams_df, matchups_df)
-
-    # Filter to owner selected from slicer
-    if owner:
-        joined_full = joined_full[joined_full['owner_name'] == owner]
-
-    # Preview table
-    #st.markdown(f"**Matchups for {owner} (with opponent owner names)**")
-    #st.dataframe(joined_full.head(100), use_container_width=True, hide_index=True)
-    # --- Compute head-to-head Win % vs opponents ---
-    # --- Compute head-to-head Win % vs opponents (using week_result only) ---
-    mh = joined_full.copy()
-
-    # Only regular season (not playoffs)
-    if 'is_playoffs' in mh.columns:
-        mh = mh[mh['is_playoffs'] == 0].copy()
-
-    # Normalize week_result values
-    mh['week_result'] = mh['week_result'].astype(str).str.lower().str.strip()
-    mh = mh[mh['week_result'].isin(['win', 'loss'])].copy()
-
-    # Map to 1/0
-    mh['win'] = mh['week_result'].map({'win': 1, 'loss': 0})
-
-    # Aggregate by opponent
-    vs = mh.groupby('opponent_owner_name', dropna=False).agg(
-        games=('win','count'),
-        wins=('win','sum')
-    ).reset_index()
-
-    vs['losses'] = vs['games'] - vs['wins']
-    vs['win_pct'] = (vs['wins'] / vs['games'] * 100).round(1)
-
-    # Sort by Win%
-    vs = vs.sort_values('win_pct', ascending=False).reset_index(drop=True)
-
-    import plotly.express as px
-
-    vs_bar = vs.copy().sort_values('win_pct', ascending=True)
-
-    # Add a "plot_value" that's never exactly zero
-    # Add a "plot_value" that's never exactly zero
-    vs_bar['plot_value'] = vs_bar['win_pct'].replace(0, 0.01)
-
-    fig = px.bar(
-        vs_bar,
-        x='plot_value',
-        y='opponent_owner_name',
-        orientation='h',
-        text='win_pct',
-        color='win_pct',
-        color_continuous_scale='Blues',
-        range_x=[0, 100],
-        labels={'plot_value':'Win %','opponent_owner_name':'Opponent'}
-    )
-
-    fig.update_traces(
-        texttemplate='%{text:.1f}%',
-        textposition='outside',
-        hovertemplate='<b>%{y}</b><br>Win %%: %{text}<br>Games: %{customdata[0]}<extra></extra>',
-        customdata=vs_bar[['games']].values
-    )
-
-    # 🔑 Remove extra margins/padding
-    fig.update_layout(
-        margin=dict(l=8, r=8, t=0, b=0),   # eliminate top/bottom/side whitespace
-        bargap=0.2,                        # tighten vertical spacing between bars
-        bargroupgap=0,                     # no gap inside groups
-        yaxis=dict(
-            automargin=True,
-            showgrid=False,
-            zeroline=False
-        ),
-        xaxis=dict(
-            range=[0, 100],
-            showgrid=True,
-            gridcolor="#444",
-            zeroline=False
-        ),
-        height=300 
-        #+ 18*len(vs_bar)        # grow chart only as needed
-    )
-
     st.markdown(
-        '<div style="font-size:20px;;font-weight:600;margin-top:0px;margin-bottom:0px;line-height:1;margin:0;">Owner Rivalry Heat Map</div>',
+        '<div style="font-size:20px;font-weight:600;line-height:1.1;margin-top:10px;margin:6px 0 0;">Weekly Points by Year</div>',
         unsafe_allow_html=True
     )
-    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
+    # detect weekly points column
+    POINTS_COL = 'points for' if 'points for' in matchups_df.columns else (
+                'points_for' if 'points_for' in matchups_df.columns else None)
+    if POINTS_COL is None:
+        raise KeyError(f"Weekly points column not found in matchups_df. Have: {list(matchups_df.columns)}")
 
-    # Team Summary Table (EXCLUDES 2017)
-    #   Year, Team_Name, league_result, regular_season_ranking, wins, losses,
-    #   points_for_total, points_against_total, number_of_waiver_moves, number_of_trades,
-    #   # high score_flags, # low_scores_flags, draft_grade, team_url
-    # -----------------------------
-    # Count high/low flags per year for this owner (reg season only, excl 2017)
-    # ---------- Flags by team_key + year (regular season only, exclude 2017) ----------
-    # Ensure flags exist and are numeric 0/1
-    m_flags = m.copy()
-    for col in ['high_score_flag', 'low_score_flag']:
-        if col not in m_flags.columns:
-            m_flags[col] = 0
-        m_flags[col] = pd.to_numeric(m_flags[col], errors='coerce').fillna(0).astype(int)
-
-    flags = (
-        m_flags[
-            (m_flags['owner_name'] == owner) &
-            (m_flags['is_playoffs'] == 0) &
-            (m_flags['year'] != 2017)
-        ]
-        .groupby(['team_key', 'year'], dropna=False)
-        .agg(high_scores=('high_score_flag', 'sum'),
-            low_scores=('low_score_flag', 'sum'))
-        .reset_index()
+    # join matchups -> owner + year
+    points_all = matchups_df.merge(
+        teams_df[['team_key','owner_name','year']].drop_duplicates(),
+        on='team_key', how='left'
     )
 
-    # ---------- Base summary (make sure team_key is included) ----------
+    # regular season only
+    if 'is_playoffs' in points_all.columns:
+        points_all = points_all[points_all['is_playoffs'].fillna(0) == 0]
+
+    # clean numeric & filter to selected owner
+    points_all[POINTS_COL] = pd.to_numeric(points_all[POINTS_COL], errors='coerce')
+    po = points_all[points_all['owner_name'] == owner].dropna(subset=[POINTS_COL, 'year']).copy()
+
+    # build clean year string and remove 2017
+    po['year_str'] = po['year'].astype(str).str.strip()
+    po = po[po['year_str'] != '2017'].copy()
+
+    # create categorical with only desired years
+    final_years = sorted([y for y in po['year_str'].unique()], key=lambda y: int(y))
+    po['year_cat'] = pd.Categorical(po['year_str'], categories=final_years, ordered=True)
+
+    # plot
+    fig_box_year = px.box(
+        po,
+        x='year_cat',
+        y=POINTS_COL,
+        points='outliers'
+    )
+    fig_box_year.update_layout(
+        xaxis_title=None,
+        yaxis_title='Points For (per week)',
+        margin=dict(l=8, r=8, t=0, b=8),
+        showlegend=False,
+        height=300
+    )
+    fig_box_year.update_xaxes(
+        showgrid=True, gridcolor="#444",
+        showline=True, linecolor="#444", linewidth=1,
+        categoryorder='category ascending',
+        type='category',
+        tickvals=list(range(len(final_years))),
+        ticktext=final_years
+    )
+    fig_box_year.update_yaxes(
+        showgrid=True, gridcolor="#444",
+        zeroline=False
+    )
+
+    st.plotly_chart(fig_box_year, use_container_width=True, config={'displayModeBar': False})
+
+    # -----------------------------
+    # Rivalry “heat map” (horizontal bar of Win% vs opponents)
+    # -----------------------------
+    # Build matchups with owner/opponent
+    t_map = teams_df[['team_key','year','owner_name']].drop_duplicates()
+    m_self = matchups_df.merge(t_map, on='team_key', how='left')
+
+    # Map opponent owner (also needs year from teams_df)
+    t_map_opp = teams_df[['team_key','year','owner_name']].drop_duplicates()
+    t_map_opp = t_map_opp.rename(columns={
+        'team_key': 'opponent_team_key',
+        'owner_name': 'opponent_owner_name'
+    })
+    m_full = m_self.merge(t_map_opp, on=['opponent_team_key','year'], how='left')
+
+    # Filter to selected owner, regular season, and valid week_result
+    mh = m_full[(m_full['owner_name'] == owner) & (m_full['is_playoffs'] == 0)].copy()
+    mh['week_result'] = mh['week_result'].astype(str).str.lower().str.strip()
+    mh = mh[mh['week_result'].isin(['win','loss'])]
+    mh['win'] = (mh['week_result'] == 'win').astype(int)
+
+    vs = (mh.groupby('opponent_owner_name', dropna=False)
+            .agg(games=('win','count'), wins=('win','sum'))
+            .reset_index())
+
+    if not vs.empty:
+        vs['losses'] = vs['games'] - vs['wins']
+        vs['win_pct'] = (vs['wins'] / vs['games'] * 100).round(1)
+        vs_bar = vs.sort_values('win_pct', ascending=True).copy()
+        # keep a hairline bar for 0% so labels still place nicely
+        vs_bar['plot_value'] = vs_bar['win_pct'].replace(0, 0.01)
+
+        # ---- FIX FOR 100% LABELS GETTING CUT OFF ----
+        # Add a small buffer to the right so "outside" labels at 100% have space.
+        x_max = min(110, max(100.0, float(vs_bar['plot_value'].max())) + 5)
+
+        fig = px.bar(
+            vs_bar, x='plot_value', y='opponent_owner_name',
+            orientation='h', text='win_pct', color='win_pct',
+            color_continuous_scale='Blues',
+            labels={'plot_value':'Win %','opponent_owner_name':'Opponent'}
+        )
+
+        fig.update_traces(
+            texttemplate='%{text:.1f}%',
+            textposition='outside',
+            cliponaxis=False,
+            hovertemplate='<b>%{y}</b><br>Win %%: %{text}<br>Games: %{customdata[0]}<extra></extra>',
+            customdata=vs_bar[['games']].values
+        )
+
+        # Remove the color bar on the right
+        fig.update_layout(coloraxis_showscale=False)
+
+        fig.update_layout(
+            margin=dict(l=8, r=28, t=0, b=0),  # keep a bit of right padding for labels
+            bargap=0.2, bargroupgap=0,
+            yaxis=dict(automargin=True, showgrid=False, zeroline=False),
+            xaxis=dict(range=[0, x_max], showgrid=True, gridcolor="#444", zeroline=False),
+            height=300
+        )
+
+        st.markdown('<div style="font-size:20px;font-weight:600;margin-top:10px;margin-bottom:0px;line-height:1;">Head-to-Head Rivalry Win Rate</div>', unsafe_allow_html=True)
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+    # ----------------------------------------------------------------
+    # Team Summary (with FAAB Used)
+    # ----------------------------------------------------------------
+    # 1) Trim to just flags we need
+    matchups_flags_df = matchups_df[['team_key','is_playoffs','high_score_flag','low_score_flag']].copy()
+    # 2) RS only
+    matchups_flags_df = matchups_flags_df[matchups_flags_df['is_playoffs'] == 0].copy()
+    # 3) Sum by team_key
+    flag_sums = (
+        matchups_flags_df.groupby('team_key', as_index=False)
+        .agg(high_scores=('high_score_flag','sum'),
+             low_scores =('low_score_flag','sum'))
+    )
+    # 4) Base summary for this owner (exclude 2017) + include FAAB
     summary_cols = [
-        'year', 'team_key', 'team_name', 'league_result', 'regular_season_ranking', 'wins', 'losses',
-        'points_for_total', 'points_against_total', 'number_of_waiver_moves', 'number_of_trades',
-        'draft_grade', 'team_url'
+        'year','team_key','team_name','league_result','regular_season_ranking','wins','losses',
+        'points_for_total','points_against_total','number_of_waiver_moves','faab_balance_used','number_of_trades',
+        'draft_grade','team_url'
     ]
     base_summary = teams_owner[summary_cols].copy()
+    # 5) LEFT JOIN on team_key
+    summary = base_summary.merge(flag_sums, on='team_key', how='left')
 
-    # ---------- Merge flag counts on (team_key, year) ----------
-    summary = base_summary.merge(flags, on=['team_key', 'year'], how='left')
-    summary['high_scores'] = summary['high_scores'].fillna(0).astype(int)
-    summary['low_scores']  = summary['low_scores'].fillna(0).astype(int)
+    # Ensure numeric, then compute points diff
+    summary['points_for_total'] = pd.to_numeric(summary['points_for_total'], errors='coerce')
+    summary['points_against_total'] = pd.to_numeric(summary['points_against_total'], errors='coerce')
+    summary['points_diff'] = (summary['points_for_total'] - summary['points_against_total']).fillna(0).astype(int)
 
-    # ---------- Order & rename for display ----------
+    # 6) force ints (include FAAB)
+    for c in [
+        'regular_season_ranking','wins','losses','points_for_total','points_against_total',
+        'number_of_waiver_moves','number_of_trades','high_scores','low_scores'
+    ]:
+        if c in summary.columns:
+            summary[c] = pd.to_numeric(summary[c], errors='coerce').fillna(0).astype(int)
+
+    # 7) rename & order (insert FAAB Used after Waiver Moves)
     display = summary.rename(columns={
         'year': 'Year',
         'team_name': 'Team Name',
@@ -497,7 +489,9 @@ def show_owner_insights(st, go, teams_df, matchups_df):
         'losses': 'Losses',
         'points_for_total': 'Points For (Total)',
         'points_against_total': 'Points Against (Total)',
+        'points_diff': 'Points Difference',
         'number_of_waiver_moves': 'Waiver Moves',
+        'faab_balance_used': 'FAAB Used',         
         'number_of_trades': 'Trades',
         'high_scores': '# High Scores',
         'low_scores': '# Low Scores',
@@ -505,18 +499,44 @@ def show_owner_insights(st, go, teams_df, matchups_df):
         'team_url': 'Team URL'
     }).sort_values('Year', ascending=True)
 
-    # keep only the columns you want to show (hide team_key)
+    # --- Force FAAB Used to literal text (no decimals, show "NA" when missing) ---
+    def _faab_to_text(x):
+        # treat true-missing as "NA"
+        if x is None or (isinstance(x, float) and np.isnan(x)) or (x is pd.NA):
+            return "NA"
+        # strings: keep literal, trimmed
+        if isinstance(x, str):
+            s = x.strip()
+            # if it's a numeric-looking string like "12.0", render humanly
+            try:
+                f = float(s)
+                return str(int(f)) if f.is_integer() else s  # keep original if it had decimals intentionally
+            except Exception:
+                return s or "NA"   # empty string -> "NA"
+        # ints
+        if isinstance(x, (int, np.integer)):
+            return str(int(x))
+        # floats
+        if isinstance(x, float):
+            return str(int(x)) if x.is_integer() else str(x).rstrip('0').rstrip('.')
+        # fallback
+        return str(x)
+
+    # if the column exists post-rename, convert it to clean text
+    if 'FAAB Used' in display.columns:
+        display['FAAB Used'] = display['FAAB Used'].apply(_faab_to_text).astype(object)
+
     ordered_cols = [
-        'Year', 'Team Name', 'League Result', 'Regular Season Rank', 'Wins', 'Losses',
-        'Points For (Total)', 'Points Against (Total)', 'Waiver Moves', 'Trades',
-        '# High Scores', '# Low Scores', 'Draft Grade', 'Team URL'
+        'Year','Team Name','League Result','Regular Season Rank','Wins','Losses',
+        'Points For (Total)','Points Against (Total)','Points Difference',
+        'Waiver Moves','FAAB Used','Trades',     
+        '# High Scores','# Low Scores','Draft Grade','Team URL'
     ]
     display = display[ordered_cols]
 
-    st.markdown('<div style="font-size:20px;font-weight:600;margin-top:0px;margin-bottom:4px;">Team Summary</div>',
+    st.markdown('<div style="font-size:20px;font-weight:600;margin-top:8px;margin-bottom:4px;">Team Summary</div>',
                 unsafe_allow_html=True)
 
-    # HTML table with sticky header + first column, mobile-scrollable
     def make_html_table(df):
         if df.empty:
             return '<div style="color:#aaa;">No rows to display.</div>'
@@ -534,7 +554,6 @@ def show_owner_insights(st, go, teams_df, matchups_df):
                 if j == 0:
                     body += f'<td style="min-width:{min_col_width}px;text-align:center;padding:6px;background:#222;color:#fff;border:1px solid #333;position:sticky;left:0;z-index:1;font-size:12px;">{val}</td>'
                 else:
-                    # clickable URL cells
                     if df.columns[j] == 'Team URL' and isinstance(val, str) and val.strip():
                         cell = f'<a href="{val}" target="_blank" style="color:#6cf;text-decoration:none;">Link</a>'
                     else:

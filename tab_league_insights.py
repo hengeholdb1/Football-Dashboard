@@ -89,16 +89,53 @@ def show_league_insights(st, go, teams_df, matchups_df):
     m = matchups_df.merge(owner_map, on='team_key', how='left')
     m = m[(m['is_playoffs'] == 0) & (m['year'] != 2017)].copy()
 
-    for col in ['high_score_flag', 'low_score_flag']:
-        if col in m.columns:
-            m[col] = m[col].fillna(0).astype(int)
-        else:
-            m[col] = 0
+    # --- FIX: pick a canonical year and coerce numeric flags/playoffs ---
+    # If both sides had `year`, a merge creates year_x/year_y; unify to a single `year`.
+    if 'year' not in m.columns:
+        # no conflict, but just in case
+        pass
+    elif 'year_x' in m.columns or 'year_y' in m.columns:
+        # Prefer matchups year when present; else take the owner_map year.
+        m['year'] = m.get('year_x', pd.NA)
+        if 'year_y' in m.columns:
+            m['year'] = m['year'].fillna(m['year_y'])
+        # Clean up any merge suffix leftovers
+        for c in ['year_x', 'year_y']:
+            if c in m.columns:
+                m.drop(columns=c, inplace=True)
 
-    owner_year_flags = m.groupby(['owner_name', 'year'], dropna=False).agg(
-        high_scores=('high_score_flag', 'sum'),
-        low_scores=('low_score_flag', 'sum')
-    ).reset_index()
+    # Coerce types BEFORE filtering
+    for col in ['year', 'is_playoffs', 'high_score_flag', 'low_score_flag']:
+        if col in m.columns:
+            m[col] = pd.to_numeric(m[col], errors='coerce')
+
+    # Treat missing as 0 for flags/playoffs
+    m['is_playoffs'] = m['is_playoffs'].fillna(0).astype(int)
+    m['high_score_flag'] = m['high_score_flag'].fillna(0).astype(int)
+    m['low_score_flag']  = m['low_score_flag'].fillna(0).astype(int)
+
+    # (Optional) If your matchups file contains both "regular" and "inverse" rows,
+    # dedupe to one row per team-week to avoid double counting.
+    # Keep the max of the flags within each (team_key, year, week).
+    if {'team_key','week'}.issubset(m.columns):
+        m = (m
+            .sort_values(['team_key','year','week'])
+            .groupby(['team_key','year','week'], as_index=False, dropna=False)
+            .agg({
+                'owner_name': 'first',
+                'is_playoffs': 'max',
+                'high_score_flag': 'max',
+                'low_score_flag': 'max'
+            }))
+
+    # Columns already coerced above; just aggregate
+    owner_year_flags = (m
+        .groupby(['owner_name', 'year'], dropna=False)
+        .agg(high_scores=('high_score_flag', 'sum'),
+            low_scores =('low_score_flag',  'sum'))
+        .reset_index()
+    )
+
 
     owner_avg_flags = owner_year_flags.groupby('owner_name', dropna=False).agg(
         **{'Avg High Scores/Year': ('high_scores', 'mean'),

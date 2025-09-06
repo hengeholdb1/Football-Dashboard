@@ -19,7 +19,6 @@ def show_draft_board(st, teams_df, draft_roster_df, players_df, matchups_df):
         matchups_df["week"] = pd.to_numeric(matchups_df["week"], errors="coerce").astype("Int64")
 
     # --- Robust keys (year_code + player_key_clean) ---
-    # e.g., "423.p.32692" --> year_code="423", player_key_clean="32692"
     def split_keys(s):
         s = str(s)
         parts = s.split(".")
@@ -53,14 +52,11 @@ def show_draft_board(st, teams_df, draft_roster_df, players_df, matchups_df):
     )
 
     # ---------- REGULAR-SEASON FINISH RANK (players_df + matchups_df) ----------
-    # Join players_df to matchups_df on team_key + week to bring in is_playoffs,
-    # then filter to regular season only (is_playoffs == 0) before summing.
     reg_players = players_df.merge(
         matchups_df[["team_key", "week", "is_playoffs"]],
         on=["team_key", "week"],
         how="left"
     )
-    # Treat NaN as regular season if missing (defensive)
     reg_players["is_playoffs"] = reg_players["is_playoffs"].fillna(0)
     reg_players = reg_players[reg_players["is_playoffs"] == 0]
 
@@ -140,9 +136,9 @@ def show_draft_board(st, teams_df, draft_roster_df, players_df, matchups_df):
     # --- Season selector with placeholder ---
     seasons = sorted(roster_full["year"].dropna().unique(), reverse=True)
     season_options = ["Select a season..."] + [str(s) for s in seasons]
-    selected = st.selectbox("Select Season/Year", season_options, index=0)
+    selected = st.selectbox("Select Year:", season_options, index=0)
     if selected == "Select a season...":
-        st.info("Please select a season to view the draft board.")
+        st.info("Please select a season to view the draft board")
         return
 
     selected_season = int(selected)
@@ -151,6 +147,28 @@ def show_draft_board(st, teams_df, draft_roster_df, players_df, matchups_df):
     # --- Draft order from Round 1 (columns left→right) ---
     round1 = season_df[season_df["round_num"] == 1].copy().sort_values("pick_num")
     owner_order = round1["owner_name"].tolist()
+
+    # ===== NEW: per-owner header metrics (for selected season) =====
+    # Regular season rank per owner (from teams_df)
+    t_year = teams_df[teams_df["year"] == selected_season].copy()
+    if "regular_season_ranking" in t_year.columns:
+        t_year["regular_season_ranking"] = pd.to_numeric(
+            t_year["regular_season_ranking"], errors="coerce"
+        )
+        reg_rank_map = (
+            t_year.dropna(subset=["owner_name"])
+                 .groupby("owner_name")["regular_season_ranking"]
+                 .first()  # assume one team per owner; 'first' is fine
+        )
+    else:
+        reg_rank_map = pd.Series(dtype="float64")
+
+    # Median actual finish rank per owner (median of all drafted players' position_finish_rank > 0)
+    med_finish_map = (
+        season_df.loc[season_df["position_finish_rank"] > 0]
+                 .groupby("owner_name")["position_finish_rank"]
+                 .median()
+    )
 
     # --- Pivot (after cell_value is final) ---
     draft_board = season_df.pivot_table(
@@ -183,12 +201,34 @@ def show_draft_board(st, teams_df, draft_roster_df, players_df, matchups_df):
         return "background-color:#222; color:white;"
 
     # --- Build HTML table (centered owner headers + mobile scroll) ---
-    header_html = "".join(
-        [f"<th style='background-color:#333; color:white; font-size:12px; font-weight:700; "
-        f"padding:4px; border:1px solid #555; text-align:center; "
-        f"position:sticky; top:0; z-index:2;'>{col}</th>"
-        for col in ["Round"] + owner_order]
-    )
+    # Round header cell
+    header_cells = [
+        "<th style='background-color:#333; color:white; font-size:12px; font-weight:700; "
+        "padding:4px; border:1px solid #555; text-align:center; position:sticky; top:0; z-index:2;'>Round</th>"
+    ]
+
+    # Owner header cells (name + regular season rank + median finish)
+    for owner in owner_order:
+        reg_val = reg_rank_map.get(owner) if owner in reg_rank_map.index else None
+        med_val = med_finish_map.get(owner) if owner in med_finish_map.index else None
+
+        reg_txt = "—" if pd.isna(reg_val) else str(int(reg_val))
+        # Median can be .5; show as integer if whole, else 1 decimal
+        if pd.isna(med_val):
+            med_txt = "—"
+        else:
+            med_txt = f"{med_val:.1f}".rstrip("0").rstrip(".")
+
+        header_cells.append(
+            "<th style='background-color:#333; color:white; padding:4px; border:1px solid #555; "
+            "text-align:center; position:sticky; top:0; z-index:2;'>"
+            f"<div style='font-size:12px; font-weight:700; white-space:nowrap; margin:0; line-height:1;'>{owner}</div>"
+            f"<div style='font-size:10px; color:#ccc; margin:0; line-height:1;'>Reg Season Owner Rank: {reg_txt}</div>"
+            f"<div style='font-size:10px; color:#ccc; margin:0; line-height:1;'>Med Player Finish Rank: {med_txt}</div>"
+            "</th>"
+        )
+
+    header_html = "".join(header_cells)
 
     # --- Round column (sticky left) ---
     body_html = ""
@@ -226,7 +266,7 @@ def show_draft_board(st, teams_df, draft_roster_df, players_df, matchups_df):
         <div style="font-size:11px;color:#aaa;margin-top:4px;text-align:right;">
             ↔️ Table is scrollable
         </div>
-        </div>
+    </div>
     """
 
     # --- Legend (simple chips) ---
