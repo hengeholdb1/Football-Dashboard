@@ -5,11 +5,11 @@ import plotly.express as px
 from streamlit.components.v1 import html as st_html
 
 
-def show_owner_insights(st, go_unused, teams_df, matchups_df):
+def show_owner_insights(st, go_unused, teams_df, matchups_df, players_df):
     # -----------------------------
     # Normalize columns & aliases
     # -----------------------------
-    for df in (teams_df, matchups_df):
+    for df in (teams_df, matchups_df, players_df):
         df.columns = df.columns.str.strip().str.lower()
 
     # === Replace the single alias_map with two maps ===
@@ -24,7 +24,8 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
         'trades': 'number_of_trades',
         'url': 'team_url',
         'draft_report_card': 'draft_grade',
-        'season': 'year'
+        'season': 'year',
+        'isfinished': 'is_finished'
     }
     matchup_alias_map = {
         'teamkey': 'team_key',
@@ -41,6 +42,7 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
     teams_df    = teams_df.rename(columns={k:v for k,v in team_alias_map.items() if k in teams_df.columns})
     matchups_df = matchups_df.rename(columns={k:v for k,v in matchup_alias_map.items() if k in matchups_df.columns})
 
+    # Light coercions
     for df in (teams_df, matchups_df):
         if 'team_key' in df.columns: df['team_key'] = df['team_key'].astype(str).str.strip()
         if 'opponent_team_key' in df.columns: df['opponent_team_key'] = df['opponent_team_key'].astype(str).str.strip()
@@ -49,18 +51,46 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
 
     # Minimal numeric coercions we use later
     for c in ['regular_season_ranking','wins','losses','points_for_total','points_against_total',
-              'number_of_waiver_moves','number_of_trades']:
+              'number_of_waiver_moves','number_of_trades','is_finished']:
         if c in teams_df.columns:
             teams_df[c] = pd.to_numeric(teams_df[c], errors='coerce')
 
-    for c in ['is_playoffs','high_score_flag','low_score_flag','week']:
+    for c in ['is_playoffs','high_score_flag','low_score_flag','week','year']:
         if c in matchups_df.columns:
             matchups_df[c] = pd.to_numeric(matchups_df[c], errors='coerce')
+
+    # Players coercions (light)
+    if 'team_key' in players_df.columns:
+        players_df['team_key'] = players_df['team_key'].astype(str).str.strip()
+    for c in ['week','player_week_points','year']:
+        if c in players_df.columns:
+            players_df[c] = pd.to_numeric(players_df[c], errors='coerce')
+
+    # =================================================
+    # GLOBAL FILTER: restrict to finished seasons only
+    # =================================================
+    if 'is_finished' in teams_df.columns:
+        teams_df = teams_df[teams_df['is_finished'].fillna(0) == 1].copy()
+
+    # Cascade filter to matchups/players using team_key
+    if not teams_df.empty and 'team_key' in teams_df.columns:
+        finished_keys = teams_df['team_key'].astype(str).unique()
+
+        if 'team_key' in matchups_df.columns:
+            matchups_df['team_key'] = matchups_df['team_key'].astype(str)
+            matchups_df = matchups_df[matchups_df['team_key'].isin(finished_keys)].copy()
+
+        if 'team_key' in players_df.columns:
+            players_df = players_df[players_df['team_key'].isin(finished_keys)].copy()
+
+    # Safety: if nothing left, exit early
+    if teams_df.empty:
+        st.info("No finished seasons available.")
+        return
 
     # -----------------------------
     # Select Box for Owner
     # -----------------------------
-    # --- Owner selector with placeholder ---
     owners = sorted(teams_df["owner_name"].dropna().unique().tolist())
     owner_options = ["Select an owner..."] + owners
     selected_owner_label = st.selectbox(
@@ -68,20 +98,18 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
         owner_options,
         index=0
     )
-
     if selected_owner_label == "Select an owner...":
         st.info("Please select an owner to continue.")
-        return  # use st.stop() if you're not inside a function
+        return
 
     owner = selected_owner_label
 
     # Optional slices (keep if you use them later)
-    teams_owner_all = teams_df[teams_df["owner_name"] == owner].copy()                # includes 2017 for cards
+    teams_owner_all = teams_df[teams_df["owner_name"] == owner].copy()                # includes 2017 (within finished seasons)
     teams_owner = teams_owner_all[teams_owner_all["year"] != 2017].copy()             # excludes 2017 for other visuals
 
-
     # -----------------------------
-    # Cards (styled like example)
+    # Cards
     # -----------------------------
     from streamlit.components.v1 import html as st_html
 
@@ -122,7 +150,6 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
             x = pd.to_numeric(v, errors="coerce")
             if pd.isna(x):
                 return "-"
-            # tidy trailing zeros
             s = f"{x:.{nd}f}"
             return s.rstrip("0").rstrip(".")
         except Exception:
@@ -147,9 +174,9 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
             display:grid;
             grid-template-columns: repeat(3, minmax(0,1fr));
             column-gap:15px; 
-            row-gap:4px;        /* no vertical gap between rows */
-            margin:0;           /* remove top/bottom margin */
-            padding:0;          /* remove padding */
+            row-gap:4px;
+            margin:0;
+            padding:0;
           }}
           .card {{
             background:transparent; 
@@ -162,8 +189,8 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
           .label {{
             font-size:14px; 
             font-weight:500; 
-            color:#aaa;               /* lighter gray label */
-            border-bottom:1px solid #555;  /* gray underline */
+            color:#aaa;
+            border-bottom:1px solid #555;
             padding-bottom:1px; 
             margin-bottom:2px; 
             white-space:nowrap; 
@@ -173,11 +200,11 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
             width:100%;
           }}
           .value {{
-            color:#fff;               /* bold white values */
+            color:#fff;
             font-size:20px; 
             font-weight:800; 
             line-height:1.2;
-            margin-top:0;             /* tighter spacing */
+            margin-top:0;
             white-space:nowrap; 
             overflow:hidden; 
             text-overflow:ellipsis; 
@@ -185,7 +212,7 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
           }}
           .sub {{
             font-size:10px; 
-            color:#999;               /* subtle gray subtext */
+            color:#999;
             margin-top:1px; 
             white-space:nowrap; 
             overflow:hidden;
@@ -200,18 +227,15 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
         </style>
         <div class="cards">{cards_html}</div>
         """
-
         st_html(html, height=60 * len(rows))
 
-    # Format values for display
     champs_s      = _fmt_int(champs)
     runnerups_s   = _fmt_int(runnerups)
     losers_s      = _fmt_int(losers)
     avg_rank_s    = _fmt_float(avg_rank, nd=2)
-    win_pct_s     = _fmt_pct(win_pct)            # win_pct is a number like 65.3
-    playoff_pct_s = _fmt_pct(playoff_pct)        # playoff_pct is a number like 58.3
+    win_pct_s     = _fmt_pct(win_pct)
+    playoff_pct_s = _fmt_pct(playoff_pct)
 
-    # Render two rows as requested
     render_cards_block([
         [("Champs", champs_s), ("Runner-ups", runnerups_s), ("Losers", losers_s)],
         [("Avg Season Rank", avg_rank_s), ("Win %", win_pct_s), ("Playoff Appear %", playoff_pct_s)],
@@ -226,29 +250,21 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
 
     def result_emoji(x: str) -> str:
         s = '' if pd.isna(x) else str(x).strip().lower()
-        if s == 'winner':
-            return '🏆'
-        if s in ('runner-up', 'runner up', 'runnerup'):
-            return '🥈'
-        if s == 'loser':
-            return '🗑️'
-        if s in ('playoffs', 'playoff'):
-            return '✅'
-        if s in ('missed playoffs', 'no playoffs', 'did not qualify', 'dnq', 'consolation', 'toilet bowl'):
-            return '❌'
-        return '❌'  # default to "missed playoffs" if unknown
+        if s == 'winner': return '🏆'
+        if s in ('runner-up', 'runner up', 'runnerup'): return '🥈'
+        if s == 'loser': return '🗑️'
+        if s in ('playoffs', 'playoff'): return '✅'
+        if s in ('missed playoffs', 'no playoffs', 'did not qualify', 'dnq', 'consolation', 'toilet bowl'): return '❌'
+        return '❌'
 
     if not line_df.empty:
         st.markdown('<div style="font-size:20px;font-weight:600;margin-top:-10px; margin-bottom:-10px; line-height:1;">Performance by Year</div>', unsafe_allow_html=True)
 
         line_df['year_str'] = line_df['year'].astype(int).astype(str)
         line_df['emoji'] = line_df['league_result'].map(result_emoji)
-
         ticks = [str(y) for y in sorted(line_df['year'].dropna().astype(int).unique())]
 
         fig_rank = go.Figure()
-
-        # Base line (no markers)
         fig_rank.add_trace(go.Scatter(
             x=line_df['year_str'],
             y=line_df['regular_season_ranking'],
@@ -257,30 +273,24 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
             hovertemplate='Year: %{x}<br>Rank: %{y:.0f}<extra></extra>',
             name=''
         ))
-
-        # Emoji at each point (acts like a "marker")
         fig_rank.add_trace(go.Scatter(
             x=line_df['year_str'],
             y=line_df['regular_season_ranking'],
             mode='text',
             text=line_df['emoji'],
             textposition='middle center',
-            textfont=dict(
-                size=16,
-                family="Segoe UI Emoji, Noto Color Emoji, Apple Color Emoji, sans-serif"
-            ),
-            hoverinfo='skip',   # avoid duplicate hover
+            textfont=dict(size=16, family="Segoe UI Emoji, Noto Color Emoji, Apple Color Emoji, sans-serif"),
+            hoverinfo='skip',
             showlegend=False,
             name=''
         ))
-
         fig_rank.update_xaxes(
             type='category',
             categoryorder='array',
             categoryarray=ticks,
             tickmode='array',
             tickvals=ticks,
-            ticktext=ticks,     # just the years (no emojis under)
+            ticktext=ticks,
             fixedrange=True,
             showline=True,
             linecolor="#444",
@@ -294,9 +304,7 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
             fixedrange=True,
             gridcolor="#444"
         )
-        # No extra bottom margin needed since emojis are on the points
         fig_rank.update_layout(height=210, margin=dict(l=8, r=8, t=0, b=8), showlegend=False)
-
         st.markdown("""
         <style>
           .emoji-legend { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:4px;}
@@ -311,11 +319,10 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
           <div class="item"><span class="emoji">❌</span><span>No Playoffs</span></div>
         </div>
         """, unsafe_allow_html=True)
-
         st.plotly_chart(fig_rank, use_container_width=True, config={'displayModeBar': False})
 
     # -----------------------------
-    # Box & Whisker: Weekly Points by Year (force-drop 2017 via Categorical)
+    # Box & Whisker: Weekly Points by Year (force-drop 2017)
     # -----------------------------
     st.markdown(
         '<div style="font-size:20px;font-weight:600;line-height:1.1;margin-top:10px;margin:6px 0 0;">Weekly Points by Year</div>',
@@ -324,11 +331,11 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
 
     # detect weekly points column
     POINTS_COL = 'points for' if 'points for' in matchups_df.columns else (
-                'points_for' if 'points_for' in matchups_df.columns else None)
+                 'points_for' if 'points_for' in matchups_df.columns else None)
     if POINTS_COL is None:
         raise KeyError(f"Weekly points column not found in matchups_df. Have: {list(matchups_df.columns)}")
 
-    # join matchups -> owner + year
+    # join matchups -> owner + year (already finished-only)
     points_all = matchups_df.merge(
         teams_df[['team_key','owner_name','year']].drop_duplicates(),
         on='team_key', how='left'
@@ -350,13 +357,7 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
     final_years = sorted([y for y in po['year_str'].unique()], key=lambda y: int(y))
     po['year_cat'] = pd.Categorical(po['year_str'], categories=final_years, ordered=True)
 
-    # plot
-    fig_box_year = px.box(
-        po,
-        x='year_cat',
-        y=POINTS_COL,
-        points='outliers'
-    )
+    fig_box_year = px.box(po, x='year_cat', y=POINTS_COL, points='outliers')
     fig_box_year.update_layout(
         xaxis_title=None,
         yaxis_title='Points For (per week)',
@@ -372,30 +373,27 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
         tickvals=list(range(len(final_years))),
         ticktext=final_years
     )
-    fig_box_year.update_yaxes(
-        showgrid=True, gridcolor="#444",
-        zeroline=False
-    )
-
+    fig_box_year.update_yaxes(showgrid=True, gridcolor="#444", zeroline=False)
     st.plotly_chart(fig_box_year, use_container_width=True, config={'displayModeBar': False})
 
     # -----------------------------
     # Rivalry “heat map” (horizontal bar of Win% vs opponents)
     # -----------------------------
-    # Build matchups with owner/opponent
+    # Build matchups with owner/opponent (finished-only)
     t_map = teams_df[['team_key','year','owner_name']].drop_duplicates()
     m_self = matchups_df.merge(t_map, on='team_key', how='left')
 
-    # Map opponent owner (also needs year from teams_df)
-    t_map_opp = teams_df[['team_key','year','owner_name']].drop_duplicates()
-    t_map_opp = t_map_opp.rename(columns={
+    # Map opponent owner (finished-only)
+    t_map_opp = teams_df[['team_key','year','owner_name']].drop_duplicates().rename(columns={
         'team_key': 'opponent_team_key',
         'owner_name': 'opponent_owner_name'
     })
     m_full = m_self.merge(t_map_opp, on=['opponent_team_key','year'], how='left')
 
     # Filter to selected owner, regular season, and valid week_result
-    mh = m_full[(m_full['owner_name'] == owner) & (m_full['is_playoffs'] == 0)].copy()
+    mh = m_full[(m_full['owner_name'] == owner)].copy()
+    if 'is_playoffs' in mh.columns:
+        mh = mh[mh['is_playoffs'].fillna(0) == 0]
     mh['week_result'] = mh['week_result'].astype(str).str.lower().str.strip()
     mh = mh[mh['week_result'].isin(['win','loss'])]
     mh['win'] = (mh['week_result'] == 'win').astype(int)
@@ -408,11 +406,7 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
         vs['losses'] = vs['games'] - vs['wins']
         vs['win_pct'] = (vs['wins'] / vs['games'] * 100).round(1)
         vs_bar = vs.sort_values('win_pct', ascending=True).copy()
-        # keep a hairline bar for 0% so labels still place nicely
         vs_bar['plot_value'] = vs_bar['win_pct'].replace(0, 0.01)
-
-        # ---- FIX FOR 100% LABELS GETTING CUT OFF ----
-        # Add a small buffer to the right so "outside" labels at 100% have space.
         x_max = min(110, max(100.0, float(vs_bar['plot_value'].max())) + 5)
 
         fig = px.bar(
@@ -421,7 +415,6 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
             color_continuous_scale='Blues',
             labels={'plot_value':'Win %','opponent_owner_name':'Opponent'}
         )
-
         fig.update_traces(
             texttemplate='%{text:.1f}%',
             textposition='outside',
@@ -429,22 +422,193 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
             hovertemplate='<b>%{y}</b><br>Win %%: %{text}<br>Games: %{customdata[0]}<extra></extra>',
             customdata=vs_bar[['games']].values
         )
-
-        # Remove the color bar on the right
         fig.update_layout(coloraxis_showscale=False)
-
         fig.update_layout(
-            margin=dict(l=8, r=28, t=0, b=0),  # keep a bit of right padding for labels
+            margin=dict(l=8, r=28, t=0, b=0),
             bargap=0.2, bargroupgap=0,
             yaxis=dict(automargin=True, showgrid=False, zeroline=False),
             xaxis=dict(range=[0, x_max], showgrid=True, gridcolor="#444", zeroline=False),
             height=300
         )
-
         st.markdown('<div style="font-size:20px;font-weight:600;margin-top:10px;margin-bottom:0px;line-height:1;">Head-to-Head Rivalry Win Rate</div>', unsafe_allow_html=True)
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-        # ----------------------------------------------------------------
+    # =========================================================
+    # ALL TIME PLAYERS (Owner-level; regular season starters)
+    # =========================================================
+    st.markdown('<div style="font-size:20px;font-weight:600;margin:10px 0 2px;">All Time Players</div>', unsafe_allow_html=True)
+
+    if players_df is None or players_df.empty:
+        st.info("Players data not provided — skipping 'All Time Players'.")
+    else:
+        need_cols_players = {"team_key","week","player_week_points","selected_position","player_position"}
+        pcols_lower = set(players_df.columns.str.lower())
+        if not need_cols_players.issubset(pcols_lower):
+            missing = ", ".join(sorted(need_cols_players - pcols_lower))
+            st.info(f"Players table missing columns: {missing}. Cannot compute All Time Players.")
+        else:
+            # ---- normalize inputs (already normalized above) ----
+            tdf = teams_df.copy()
+            mdf = matchups_df.copy()
+            pdf = players_df.copy()
+
+            # owner team/year map
+            t_owner = (
+                tdf.loc[tdf["owner_name"] == owner, ["team_key", "year"]]
+                   .dropna(subset=["team_key"])
+                   .drop_duplicates()
+                   .copy()
+            )
+            if t_owner.empty:
+                st.info("No teams found for this owner.")
+            else:
+                t_owner["team_key"] = t_owner["team_key"].astype(str)
+
+                # matchups: attach year from teams (ensuring finished-only), RS only
+                m = mdf.copy()
+                if "team_key" not in m.columns or "week" not in m.columns:
+                    st.info("matchups_df missing required columns (team_key/week).")
+                else:
+                    m["team_key"] = m["team_key"].astype(str)
+                    m["week"] = pd.to_numeric(m["week"], errors="coerce").astype("Int64")
+                    m = m.merge(t_owner, on="team_key", how="inner")  # only this owner's teams (has year now)
+
+                    if "is_playoffs" not in m.columns:
+                        m["is_playoffs"] = 0
+                    m["is_playoffs"] = pd.to_numeric(m["is_playoffs"], errors="coerce").fillna(0).astype(int)
+
+                    m_owner = m[(m["is_playoffs"] == 0) & m["team_key"].notna() & m["week"].notna()].copy()
+                    if m_owner.empty:
+                        st.info("No regular-season matchups found for this owner.")
+                    else:
+                        # players: keep only rows that match the owner's scheduled weeks (adds year)
+                        pdf["team_key"] = pdf["team_key"].astype(str)
+                        pmo = pdf.merge(
+                            m_owner[["team_key", "week", "year"]],
+                            on=["team_key", "week"],
+                            how="inner",
+                            validate="m:1"
+                        )
+
+                        # starters only
+                        def _is_started(slot):
+                            s = (str(slot).strip().upper() if slot is not None else "")
+                            return s not in ("BN", "IR")
+                        pmo = pmo[pmo["selected_position"].apply(_is_started)].copy()
+
+                        if pmo.empty:
+                            st.info("No started-player rows found for this owner in the regular season.")
+                        else:
+                            # numeric points
+                            pmo["player_week_points"] = pd.to_numeric(pmo["player_week_points"], errors="coerce").fillna(0.0)
+
+                            # position normalization
+                            def _norm_pos(p):
+                                s = str(p).strip().upper() if p is not None else ""
+                                return "DEF" if s in ("DST","D/ST","DEFENSE") else s
+                            pmo["player_position_norm"] = pmo["player_position"].map(_norm_pos)
+
+                            # choose player name column
+                            player_name_col = next((c for c in ["player_name","name","full_name","player_full_name","player_key"] if c in pmo.columns), None)
+                            if player_name_col is None:
+                                st.info("No player name/key column found; cannot compute All Time Players.")
+                            else:
+                                pmo["player_name_display"] = pmo[player_name_col].astype(str)
+                                if "player_key" in pmo.columns:
+                                    pmo["player_key"] = pmo["player_key"].astype(str)
+
+                                # ---------- aggregate to single-season totals per player ----------
+                                season_totals = (
+                                    pmo.groupby(["player_position_norm","player_name_display","player_key","year"], dropna=False)["player_week_points"]
+                                       .sum()
+                                       .reset_index()
+                                       .rename(columns={"player_week_points":"points"})
+                                )
+                                season_totals["player_name"] = season_totals["player_name_display"].astype(str)
+                                season_totals["year"] = season_totals["year"].astype("Int64")
+
+                                POS_ORDER = ["QB","RB","WR","TE","K","DEF"]
+                                tabs = st.tabs(["First Team All Pro"] + POS_ORDER)
+
+                                def render_top5(df_in):
+                                    df = df_in.sort_values("points", ascending=False).head(5).copy()
+                                    view = df[["player_name","year","points"]].rename(columns={
+                                        "player_name": "Player Name",
+                                        "year": "Year Owned",
+                                        "points": "Points"
+                                    })
+                                    n_rows = len(view)
+                                    fit_height = min(500, 40 + n_rows*34 + 10)
+                                    st.dataframe(
+                                        view,
+                                        use_container_width=True,
+                                        hide_index=True,
+                                        column_config={
+                                            "Player Name": st.column_config.TextColumn("Player Name", pinned="left"),
+                                            "Year": st.column_config.NumberColumn("Year", format="%d"),
+                                            "Points": st.column_config.NumberColumn("Points", format="%d"),
+                                        },
+                                        height=fit_height,
+                                    )
+
+                                # ---- First Team All Pro tab (QB, RB, RB, WR, WR, TE, K, DEF) ----
+                                with tabs[0]:
+                                    def top_n(pos, n):
+                                        tmp = season_totals[season_totals["player_position_norm"] == pos].copy()
+                                        if tmp.empty:
+                                            return tmp
+                                        tmp = tmp.sort_values("points", ascending=False).head(n)
+                                        tmp["Pos"] = pos
+                                        return tmp
+
+                                    # Build in exact order (and amounts): QB(1), RB(2), WR(2), TE(1), K(1), DEF(1)
+                                    blocks = [
+                                        top_n("QB", 1),
+                                        top_n("RB", 2),
+                                        top_n("WR", 2),
+                                        top_n("TE", 1),
+                                        top_n("K",  1),
+                                        top_n("DEF",1),
+                                    ]
+                                    blocks = [b for b in blocks if b is not None and not b.empty]
+
+                                    if not blocks:
+                                        st.info("No data available to determine First Team All Pro.")
+                                    else:
+                                        ftp = pd.concat(blocks, ignore_index=True)
+
+                                        # Include Pos as first column
+                                        view = ftp[["Pos", "player_name", "year", "points"]].rename(columns={
+                                            "player_name": "Player Name",
+                                            "year": "Year Owned",
+                                            "points": "Points"
+                                        })
+
+                                        n_rows = len(view)
+                                        fit_height = min(500, 40 + n_rows * 34 + 10)
+                                        st.dataframe(
+                                            view,
+                                            use_container_width=True,
+                                            hide_index=True,
+                                            column_config={
+                                                "Pos": st.column_config.TextColumn("Pos", pinned="left"),
+                                                "Player Name": st.column_config.TextColumn("Player Name"),
+                                                "Year Owned": st.column_config.NumberColumn("Year", format="%d"),
+                                                "Points": st.column_config.NumberColumn("Points", format="%d"),
+                                            },
+                                            height=fit_height,
+                                        )
+
+
+                                # ---- Position tabs (TOP 5) ----
+                                for i, pos in enumerate(POS_ORDER, start=1):
+                                    with tabs[i]:
+                                        pos_tbl = season_totals[season_totals["player_position_norm"] == pos].copy()
+                                        if pos_tbl.empty:
+                                            st.info(f"No data for {pos}.")
+                                        else:
+                                            render_top5(pos_tbl)
+
     # Team Summary (dataframe w/ pinned first col + link)
     # ----------------------------------------------------------------
     # 1) Trim to just flags we need
@@ -542,7 +706,7 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df):
     n_rows = len(display)
     row_px = 34
     header_px = 40
-    padding_px = 16
+    padding_px = 10
     max_px = 1200
     fit_height = min(max_px, header_px + n_rows * row_px + padding_px)
 

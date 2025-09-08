@@ -7,6 +7,7 @@ from tab_league_insights import show_league_insights
 from tab_draft_board import show_draft_board
 from tab_owner_insights import show_owner_insights
 from tab_team_insights import show_team_insights
+from tab_season_insights import show_season_insights
 import base64
 from pathlib import Path
 
@@ -139,9 +140,10 @@ div[data-testid="stSelectbox"] > div{
 page = st.selectbox(
     "Select Page:",
     [
-        "League Analytics",
-        "Owner Analytics",
-        "Team Analytics",
+        "Season Summary",
+        "Team Summary",
+        "Owner History",
+        "League History",
         "Hall of Fame/ Shame",
         "Draft Boards",
         "Rulebook"
@@ -150,16 +152,17 @@ page = st.selectbox(
     key="page_select"
 )
 
+if page == "Season Summary":
+    show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster_df)
 
-
-if page == "League Analytics":
-    show_league_insights(st, go, teams_df, matchups_df)
-
-elif page == "Owner Analytics":
-    show_owner_insights(st, go, teams_df, matchups_df)
-
-elif page == "Team Analytics":
+elif page == "Team Summary":
     show_team_insights(st, go, teams_df, matchups_df, players_df)
+
+elif page == "Owner History":
+    show_owner_insights(st, go, teams_df, matchups_df, players_df)
+
+if page == "League History":
+    show_league_insights(st, go, teams_df, matchups_df)
 
 elif page == "Hall of Fame/ Shame":
     show_hall_of_fame(st, teams_df, matchups_df, players_df)

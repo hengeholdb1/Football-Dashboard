@@ -34,7 +34,8 @@ def show_team_insights(st, go, teams_df, matchups_df, players_df):
     owners = sorted(teams["owner_name"].dropna().unique().tolist()) if "owner_name" in teams.columns else []
     owner_options = ["Select an owner..."] + owners
 
-    selected_owner_label = st.selectbox("Select Owner:", owner_options, index=0)
+    # (optional) stable key for owner select
+    selected_owner_label = st.selectbox("Select Owner:", owner_options, index=0, key="owner_select")
 
     if selected_owner_label == "Select an owner..." or not selected_owner_label:
         st.info("Please select an owner to continue")
@@ -52,18 +53,29 @@ def show_team_insights(st, go, teams_df, matchups_df, players_df):
             .unique()
             .tolist()
         )
+        # newest first
         owner_years = sorted([y for y in owner_years if y != 2017], reverse=True)
     else:
         owner_years = []
 
     year_options = ["Select a year..."] + owner_years
-    selected_year_label = st.selectbox("Select Year:", year_options, index=0)
+
+    # Default to the newest year for this owner (index=1 because of the placeholder at 0).
+    # Using a key that includes the owner forces Streamlit to reset the widget when owner changes.
+    default_year_index = 1 if owner_years else 0
+    selected_year_label = st.selectbox(
+        "Select Year:",
+        year_options,
+        index=default_year_index,
+        key=f"year_for_{owner}"
+    )
 
     if selected_year_label == "Select a year..." or selected_year_label is None:
         st.info("Please select a year to continue")
         return
 
     year = int(selected_year_label)
+
 
     # Optional slices (keep if you use them later)
     teams_owner_all = teams[teams["owner_name"] == owner].copy()                # includes 2017
