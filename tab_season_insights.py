@@ -425,7 +425,7 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
         height=420
     )
     fig_rank.update_layout(
-        margin=dict(l=8, r=8, t=4, b=8),
+        margin=dict(l=8, r=0, t=4, b=8),
         coloraxis_colorbar=dict(title="Rank"),
     )
     fig_rank.update_xaxes(side="top", tickangle=0, title=None)
@@ -742,7 +742,7 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
 
             fig_scatter.add_annotation(
                 x=x_min + (x_med - x_min) / 2,
-                y=y_max - (y_max - y_med) / 2 + 0.02,
+                y=y_max - (y_max - y_med) / 2,
                 text="Bad & Volatile",
                 showarrow=False,
                 font=dict(size=11, color="#AAAAAA"),
@@ -751,7 +751,7 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
 
             fig_scatter.add_annotation(
                 x=x_max - (x_max - x_med) / 2,
-                y=y_max - (y_max - y_med) / 2 + 0.02,
+                y=y_max - (y_max - y_med) / 2,
                 text="Elite & Volatile",
                 showarrow=False,
                 font=dict(size=11, color="#AAAAAA"),
@@ -762,12 +762,13 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
                 '<div style="font-size:20px;font-weight:600;margin:10px 0 4px;">Team Scoring: Consistency vs Output</div>',
                 unsafe_allow_html=True
             )
-            st.plotly_chart(fig_scatter, use_container_width=True, config={"displayModeBar": False})
-
             # Optional callout if some owners have very few weeks
             few = stats[stats["n"] < 5]
             if not few.empty:
                 st.caption("Note: Volatility may be unstable or zero early in the season")
+            st.plotly_chart(fig_scatter, use_container_width=True, config={"displayModeBar": False})
+
+
 
     # ============================================
     # 100% Horizontal Stacked Bar:
