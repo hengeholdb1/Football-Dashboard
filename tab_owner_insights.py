@@ -545,7 +545,7 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df, players_df):
                                         hide_index=True,
                                         column_config={
                                             "Player Name": st.column_config.TextColumn("Player Name", pinned="left"),
-                                            "Year": st.column_config.NumberColumn("Year", format="%d"),
+                                            "Year Owned": st.column_config.NumberColumn("Year Owned", format="%d"),
                                             "Points": st.column_config.NumberColumn("Points", format="%d"),
                                         },
                                         height=fit_height,
@@ -593,7 +593,7 @@ def show_owner_insights(st, go_unused, teams_df, matchups_df, players_df):
                                             column_config={
                                                 "Pos": st.column_config.TextColumn("Pos", pinned="left"),
                                                 "Player Name": st.column_config.TextColumn("Player Name"),
-                                                "Year Owned": st.column_config.NumberColumn("Year", format="%d"),
+                                                "Year Owned": st.column_config.NumberColumn("Year Owned", format="%d"),
                                                 "Points": st.column_config.NumberColumn("Points", format="%d"),
                                             },
                                             height=fit_height,
