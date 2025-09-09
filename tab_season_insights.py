@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
+from streamlit.components.v1 import html as st_html
 
 def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster_df=None):
     has_draft = draft_roster_df is not None
@@ -19,12 +20,12 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
     def _pick(df, options):
         return next((c for c in options if c in df.columns), None)
 
-    # Require these two keys to be able to repair the rest if needed
+    # Require team_key
     if "team_key" not in teams.columns:
         st.error("Season Insights: teams_df is missing 'team_key'.")
         return
 
-    # Column picks (teams table) — try common variants
+    # Column picks (teams table)
     year_col   = _pick(teams, ["year", "season"])
     owner_col  = _pick(teams, ["owner_name", "owner", "manager"])
     team_col   = _pick(teams, ["team_name", "team"])
@@ -39,8 +40,7 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
     faab_used_col = "faab_balance_used" if "faab_balance_used" in teams.columns else None
 
     # -----------------------------
-    # If any of wins/losses/pf/pa are missing on teams_df,
-    # compute them from matchups_df (regular season only), then merge back.
+    # Repair wins/losses/pf/pa from matchups if needed (regular season only)
     # -----------------------------
     need_from_m = (wins_col is None) or (losses_col is None) or (pf_col is None) or (pa_col is None)
     if need_from_m:
@@ -50,7 +50,6 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
             st.error(f"Season Insights: teams_df is missing W/L/PF/PA and matchups_df lacks columns to compute them ({missing}).")
             return
 
-        # bring a year onto matchups if needed
         m = matchups.copy()
         if "year" not in m.columns:
             if "year" not in teams.columns:
@@ -59,29 +58,24 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
             t_year = teams[["team_key", "year"]].dropna().drop_duplicates()
             m = m.merge(t_year, on="team_key", how="left", validate="m:1")
 
-        # regular season only
         if "is_playoffs" in m.columns:
             m["is_playoffs"] = pd.to_numeric(m["is_playoffs"], errors="coerce").fillna(0).astype(int)
             m = m[m["is_playoffs"] == 0]
 
-        # coerce numerics
         m["points_for"] = pd.to_numeric(m["points_for"], errors="coerce").fillna(0.0)
         m["points_against"] = pd.to_numeric(m["points_against"], errors="coerce").fillna(0.0)
 
-        # compute W/L per row (ties count as neither)
         if "week_result" in m.columns:
             res = m["week_result"].astype(str).str.strip().str.lower()
             win_mask  = res.eq("win")
             loss_mask = res.eq("loss")
         else:
-            # fallback: infer result from points
             win_mask  = m["points_for"] > m["points_against"]
             loss_mask = m["points_for"] < m["points_against"]
 
         m["win"]  = win_mask.astype(int)
         m["loss"] = loss_mask.astype(int)
 
-        # aggregate per team_key x year
         agg = (m.groupby(["team_key", "year"], dropna=False)
                  .agg(wins=("win", "sum"),
                       losses=("loss", "sum"),
@@ -89,11 +83,9 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
                       points_against_total=("points_against", "sum"))
                  .reset_index())
 
-        # merge onto teams; prefer existing cols if present
         teams["team_key"] = teams["team_key"].astype(str)
         agg["team_key"]   = agg["team_key"].astype(str)
 
-        # ensure teams has year for proper merge
         if year_col is None:
             year_col = "year"
             if "year" not in teams.columns:
@@ -102,26 +94,23 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
 
         teams = teams.merge(agg, on=["team_key", "year"], how="left", suffixes=("", "_calc"))
 
-        # (re)assign pointers to the computed columns if original ones were missing
         if wins_col   is None: wins_col   = "wins_calc"
         if losses_col is None: losses_col = "losses_calc"
         if pf_col     is None: pf_col     = "points_for_total_calc"
         if pa_col     is None: pa_col     = "points_against_total_calc"
 
-        # if the original columns exist but are empty, fall back to _calc
         for base, calc in [("wins", "wins_calc"), ("losses","losses_calc"),
                            ("points_for_total", "points_for_total_calc"),
                            ("points_against_total","points_against_total_calc")]:
             if base in teams.columns and calc in teams.columns:
                 teams[base] = teams[base].fillna(teams[calc])
 
-        # final sanity: if pointers still not in frame, error out
         for colname in [wins_col, losses_col, pf_col, pa_col]:
             if colname not in teams.columns:
                 st.error(f"Season Insights: failed to compute missing column '{colname}'.")
                 return
 
-    # Confirm owner/year now exist
+    # Confirm owner/year
     if year_col is None or year_col not in teams.columns:
         st.error("Season Insights: Could not resolve a 'year' column in teams_df.")
         return
@@ -135,7 +124,7 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
             teams[c] = pd.to_numeric(teams[c], errors="coerce")
 
     # -----------------------------
-    # Year slicer (default to latest)
+    # Year slicer (default latest)
     # -----------------------------
     years = sorted(teams[year_col].dropna().astype(int).unique())
     if not years:
@@ -148,15 +137,10 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
         st.info("No data for the selected season.")
         return
 
-    # =============== Season Result (center owner names, +25% sizes) ===============
-    from streamlit.components.v1 import html as st_html
-
-    def _pick(df, options):
-        return next((c for c in df.columns if c in df.columns), None)
-
+    # =============== Season Result ===============
     is_finished_col = next((c for c in ["is_finished", "finished", "season_finished"] if c in teams.columns), None)
     league_res_col  = next((c for c in ["league_result", "league_result_final", "final_result"] if c in teams.columns), None)
-    owner_disp_col  = owner_col  # resolved earlier
+    owner_disp_col  = owner_col
 
     _season_raw = teams[teams[year_col] == selected_year].copy()
 
@@ -173,14 +157,14 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
         name = cand.iloc[0][owner_disp_col]
         return str(name).strip() if pd.notna(name) and str(name).strip() else "-"
 
+    # Decide if season is finished (robust to 1/0, True/False, yes/no, etc.)
     show_season_result = False
     if is_finished_col and is_finished_col in _season_raw.columns:
         try:
-            st.markdown(
-                '<div style="font-size:20px;font-weight:600;margin-bottom:0px;margin-top:4px">Season Results</div>',
-                unsafe_allow_html=True
-                )
-            show_season_result = pd.to_numeric(_season_raw[is_finished_col], errors="coerce").fillna(0).astype(int).max() == 1
+            s = _season_raw[is_finished_col].astype(str).str.strip().str.lower()
+            truthy = s.isin({"1","true","yes","y","finished","final","complete","completed","done"})
+            numeric_one = pd.to_numeric(s, errors="coerce").fillna(0).astype(int).eq(1)
+            show_season_result = bool((truthy | numeric_one).any())
         except Exception:
             show_season_result = False
 
@@ -200,7 +184,7 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
           }}
           .sr-card {{
             background:transparent;
-            border:none;                     /* no outline */
+            border:none;
             border-radius:10px;
             padding:10px 12px;
             min-width:0;
@@ -208,48 +192,32 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
             flex-direction:column;
           }}
           .sr-label-row {{
-            display:flex; 
-            align-items:center; 
-            justify-content:center;          /* center the emoji */
+            display:flex;
+            align-items:center;
+            justify-content:center;
             margin-bottom:4px;
             border-bottom:none;
             padding-bottom:0;
           }}
-          /* +25% sizes (was ~22px/20px) */
-          .sr-emoji {{ 
-            font-size:28px;                  /* 22 * 1.25 ≈ 27.5 -> 28 */
-            line-height:1; 
-          }}
+          .sr-emoji {{ font-size:28px; line-height:1; }}
           .sr-value {{
-            color:#fff; 
-            font-size:25px;                  /* 20 * 1.25 = 25 */
-            font-weight:800; 
-            line-height:1.3;
-            white-space:nowrap; 
-            overflow:hidden; 
-            text-overflow:ellipsis; 
-            text-align:center;               /* center owner names */
+            color:#fff; font-size:25px; font-weight:800; line-height:1.3;
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:center;
           }}
           @media (max-width:480px){{
-            .sr-emoji{{font-size:25px;}}     /* 20 * 1.25 = 25 */
-            .sr-value{{font-size:23px;}}     /* 18 * 1.25 ≈ 22.5 -> 23 */
+            .sr-emoji{{font-size:25px;}}
+            .sr-value{{font-size:23px;}}
           }}
         </style>
-
         <div class="season-result-cards">
-          <!-- 🏆 Winner -->
           <div class="sr-card">
             <div class="sr-label-row"><div class="sr-emoji" title="Winner">🏆</div></div>
             <div class="sr-value">{winner}</div>
           </div>
-
-          <!-- 🥈 Runner-up -->
           <div class="sr-card">
             <div class="sr-label-row"><div class="sr-emoji" title="Runner-up">🥈</div></div>
             <div class="sr-value">{runner_up}</div>
           </div>
-
-          <!-- 🗑️ Loser -->
           <div class="sr-card">
             <div class="sr-label-row"><div class="sr-emoji" title="Loser">🗑️</div></div>
             <div class="sr-value">{loser}</div>
@@ -257,10 +225,9 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
         </div>
         """
         st_html(html, height=90)
-    # ============= end Season Result block =============
 
     # -----------------------------
-    # Season Standings (Rank table) + # High/Low Scores from flags
+    # Season Standings table
     # -----------------------------
     w = season[wins_col].fillna(0).astype(int)
     l = season[losses_col].fillna(0).astype(int)
@@ -277,59 +244,41 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
     else:
         season["FAAB Balance"] = 0
 
-    # --- Compute # High/Low Scores from matchups flags (regular season only) ---
+    # # High/Low Scores (regular season only)
     need_flags = {"team_key","week","high_score_flag","low_score_flag"}
     if not need_flags.issubset(matchups.columns):
-        # If flags are missing, default to 0 so the table still renders
         season["_high_scores"] = 0
         season["_low_scores"]  = 0
     else:
         m2 = matchups.copy()
-
-        # Ensure year on matchups
         if "year" not in m2.columns:
             ty = teams[["team_key", year_col]].dropna().drop_duplicates().rename(columns={year_col: "year"})
             m2 = m2.merge(ty, on="team_key", how="left", validate="m:1")
-
-        # Filter season + regular season
         m2 = m2[m2["year"] == selected_year].copy()
         if "is_playoffs" in m2.columns:
             m2["is_playoffs"] = pd.to_numeric(m2["is_playoffs"], errors="coerce").fillna(0).astype(int)
             m2 = m2[m2["is_playoffs"] == 0]
-
-        # Coerce types
         m2["team_key"] = m2["team_key"].astype(str)
         m2["high_score_flag"] = pd.to_numeric(m2["high_score_flag"], errors="coerce").fillna(0).astype(int)
         m2["low_score_flag"]  = pd.to_numeric(m2["low_score_flag"],  errors="coerce").fillna(0).astype(int)
-
-        # Sum flags per team_key
         counts = (
             m2.groupby("team_key", dropna=False)[["high_score_flag","low_score_flag"]]
-              .sum()
-              .reset_index()
-              .rename(columns={
-                  "high_score_flag": "_high_scores",
-                  "low_score_flag":  "_low_scores"
-              })
+              .sum().reset_index()
+              .rename(columns={"high_score_flag": "_high_scores", "low_score_flag": "_low_scores"})
         )
-
-        # Merge onto season (ensure team_key present as string)
         season["team_key"] = season["team_key"].astype(str)
         season = season.merge(counts, on="team_key", how="left")
         season["_high_scores"] = season["_high_scores"].fillna(0).astype(int)
         season["_low_scores"]  = season["_low_scores"].fillna(0).astype(int)
 
-    # Sort & rank (wins desc, PF desc)
     season = season.sort_values(by=[wins_col, pf_col], ascending=[False, False]).reset_index(drop=True)
     season["Rank"] = range(1, len(season) + 1)
 
-    # Owner & Team display
     if team_col is None:
         season["_team_display"] = "-"
     else:
         season["_team_display"] = season[team_col].astype(str).replace({"": "-"}).fillna("-")
 
-    # Build final table (rename the new columns BEFORE selecting)
     season = season.rename(columns={
         owner_col: "Owner",
         "_team_display": "Team",
@@ -337,7 +286,6 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
         "_low_scores":  "# Low Scores"
     })
 
-    # Reorder so Owner is first, then Rank
     final_df = season[[
         "Owner", "Rank", "Record",
         "Points For", "Points Against",
@@ -349,7 +297,6 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
         '<div style="font-size:20px;font-weight:600;margin-top:0px; margin-bottom:2px;">Season Standings</div>',
         unsafe_allow_html=True
     )
-
     n_rows = len(final_df)
     fit_height = min(1200, 40 + n_rows*34 + 10)
     st.dataframe(
@@ -371,7 +318,7 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
         height=fit_height,
     )
 
-    # Build a lookup of Owner -> overall Rank so we can label the heatmap rows
+    # Owner -> overall Rank (for labels/sorting)
     owner_rank_map = dict(zip(final_df["Owner"], final_df["Rank"]))
 
     # -----------------------------
@@ -382,15 +329,11 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
         unsafe_allow_html=True
     )
 
-    # Prepare matchups for selected year, regular season only
-    if "team_key" not in teams.columns:
-        st.info("Missing 'team_key' in teams; cannot compute position ranks.")
+    if "team_key" not in teams.columns or "team_key" not in matchups.columns:
+        st.info("Missing 'team_key' in teams or matchups; cannot compute position ranks.")
         return
 
     _teams_key_year = teams[["team_key", year_col]].dropna().drop_duplicates().rename(columns={year_col: "year"})
-    if "team_key" not in matchups.columns:
-        st.info("Missing 'team_key' in matchups; cannot compute position ranks.")
-        return
 
     _m = matchups.merge(_teams_key_year, on="team_key", how="left", validate="m:1")
     _m = _m[_m["year"] == selected_year].copy()
@@ -402,14 +345,12 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
         return
     _m["week"] = pd.to_numeric(_m["week"], errors="coerce")
 
-    # Map team_key -> owner for this year
     owner_map = (
         teams[teams[year_col] == selected_year][["team_key", owner_col]]
         .dropna(subset=["team_key"]).drop_duplicates().assign(team_key=lambda d: d["team_key"].astype(str))
         .rename(columns={owner_col: "owner_name"})
     )
 
-    # Join players to scheduled weeks of this year
     if "team_key" not in players.columns or "week" not in players.columns:
         st.info("Missing 'team_key' or 'week' in players; cannot compute position ranks.")
         return
@@ -418,10 +359,8 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
     _p = players.merge(_t_y, on="team_key", how="left", validate="m:1")
     _p = _p[_p["year"].notna()].copy()
     _p["year"] = _p["year"].astype(int)
-
     _pm = _p.merge(_m[["team_key", "week", "year"]], on=["team_key", "week", "year"], how="inner")
 
-    # Starters-only filter + numerics
     if not {"selected_position", "player_week_points", "team_key", "week"}.issubset(_pm.columns):
         st.info("Missing required columns to compute position ranks.")
         return
@@ -434,7 +373,6 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
     _pm["player_week_points"] = pd.to_numeric(_pm["player_week_points"], errors="coerce").fillna(0.0)
     _pm["team_key"] = _pm["team_key"].astype(str)
 
-    # Normalize positions: DST->DEF; others/hybrids->FLEX
     BASE = {"QB", "RB", "WR", "TE", "K", "DEF"}
     def _map_slot(s: str) -> str:
         s = (s or "").strip().upper()
@@ -442,7 +380,7 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
         return s if s in BASE else "FLEX"
     _pm["pos"] = _pm["selected_position"].map(_map_slot)
 
-    # Average within TEAM × WEEK × POS (two RBs started → avg their points)
+    # Avg within TEAM × WEEK × POS (two RBs started → avg their points)
     twpos = (
         _pm.groupby(["team_key", "week", "pos"], as_index=False)["player_week_points"]
            .mean()
@@ -452,10 +390,8 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
         st.info("No starter data found to compute position ranks.")
         return
 
-    # Attach owner names
     twpos = twpos.merge(owner_map, on="team_key", how="left")
 
-    # Per-owner, per-position season average
     owner_pos = (
         twpos.groupby(["owner_name", "pos"], dropna=False)["weekly_avg"]
              .mean()
@@ -463,31 +399,25 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
              .rename(columns={"weekly_avg": "owner_pos_avg"})
     )
 
-    # Rank within each position (1 = best)
     owner_pos["rank_in_pos"] = (
         owner_pos.groupby("pos")["owner_pos_avg"]
                  .rank(method="dense", ascending=False)
                  .astype(int)
     )
 
-    # Pivot to matrix and order axes
     desired_order = ["QB", "RB", "WR", "TE", "FLEX", "K", "DEF"]
-    heat = owner_pos.pivot(index="owner_name", columns="pos", values="rank_in_pos")
-    heat = heat[[c for c in desired_order if c in heat.columns]]
+    heat_rank = owner_pos.pivot(index="owner_name", columns="pos", values="rank_in_pos")
+    heat_rank = heat_rank[[c for c in desired_order if c in heat_rank.columns]]
 
-    # Sort owners by OVERALL season rank (from the table) and label as "#<rank> Owner"
-    # Any owners missing in table (shouldn't happen) will go to bottom.
-    owners_sorted = sorted(
-        heat.index.tolist(),
+    owners_sorted_rank = sorted(
+        heat_rank.index.tolist(),
         key=lambda o: owner_rank_map.get(o, 1e9)
     )
-    heat = heat.reindex(owners_sorted)
+    heat_rank = heat_rank.reindex(owners_sorted_rank)
+    y_labels_rank = [f"#{owner_rank_map.get(o, '-') } {o}" for o in heat_rank.index]
 
-    y_labels = [f"#{owner_rank_map.get(o, '-') } {o}" for o in heat.index]
-
-    # Plot: green → yellow → red (1 = best shows as green)
     fig_rank = px.imshow(
-        heat,
+        heat_rank,
         text_auto=True,
         aspect="auto",
         color_continuous_scale=["#2ca02c", "#ffffbf", "#d7191c"],  # green → yellow → red
@@ -498,33 +428,19 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
         margin=dict(l=8, r=8, t=4, b=8),
         coloraxis_colorbar=dict(title="Rank"),
     )
-    fig_rank.update_xaxes(side="top", tickangle=0, title=None)    # remove "pos" label
-    fig_rank.update_yaxes(title=None, ticktext=y_labels, tickvals=list(range(len(y_labels))))
-
+    fig_rank.update_xaxes(side="top", tickangle=0, title=None)
+    fig_rank.update_yaxes(title=None, ticktext=y_labels_rank, tickvals=list(range(len(y_labels_rank))))
     st.plotly_chart(fig_rank, use_container_width=True, config={"displayModeBar": False})
 
-    # ============================================
-    # Relative to League Avg: Weekly Started Points by Position
-    # ============================================
-
-    st.markdown(
-    '<div style="font-size:20px;font-weight:600;margin:10px 0 4px;">Positional Scoring vs League</div>',
-    unsafe_allow_html=True
-    )
-
-    need_players = {"team_key","week","player_week_points","selected_position"}
-    need_match   = {"team_key","week"}
-    if not need_players.issubset(players.columns) or not need_match.issubset(matchups.columns):
-        missing = sorted((need_players - set(players.columns)) | (need_match - set(matchups.columns)))
-        st.info(f"Cannot build relative position chart: missing columns: {', '.join(missing)}")
-    else:
-        # Map team_key -> year if matchups lacks year
+    # -----------------------------
+    # Leave-One-Out positional diffs helper
+    # -----------------------------
+    def _compute_positional_diffs_LOO(teams, matchups, players, selected_year, year_col, owner_col):
         mk = matchups.copy()
         if "year" not in mk.columns:
             ty = teams[["team_key", year_col]].dropna().drop_duplicates().rename(columns={year_col: "year"})
             mk = mk.merge(ty, on="team_key", how="left", validate="m:1")
 
-        # Filter season + regular season only
         mk = mk[["team_key","week","year","is_playoffs"]].copy()
         mk["team_key"] = mk["team_key"].astype(str)
         mk["year"]     = pd.to_numeric(mk["year"], errors="coerce")
@@ -533,30 +449,25 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
             mk["is_playoffs"] = pd.to_numeric(mk["is_playoffs"], errors="coerce").fillna(0).astype(int)
             mk = mk[mk["is_playoffs"] == 0]
 
-        # Join onto players to get starters scheduled that week
         pp = players.copy()
         pp["team_key"] = pp["team_key"].astype(str)
         pp = pp.merge(mk, on=["team_key","week"], how="inner")
 
-        # Starters only
         pp = pp[~pp["selected_position"].astype(str).str.upper().isin(["BN","IR"])].copy()
         pp["player_week_points"] = pd.to_numeric(pp["player_week_points"], errors="coerce").fillna(0.0)
 
-        # Normalize slot → position group
-        def map_slot(s: str) -> str:
+        def _map_slot2(s: str) -> str:
             s = (s or "").strip().upper()
             if s == "DST": return "DEF"
             return s if s in {"QB","RB","WR","TE","K","DEF"} else "FLEX"
-        pp["pos"] = pp["selected_position"].map(map_slot)
+        pp["pos"] = pp["selected_position"].map(_map_slot2)
 
-        # Avg points per TEAM × WEEK × POS
         twpos_avg = (
             pp.groupby(["team_key","week","pos"], as_index=False)["player_week_points"]
               .mean()
               .rename(columns={"player_week_points":"weekly_avg"})
         )
 
-        # Owner mapping
         owner_map_df = (
             teams[teams[year_col] == selected_year][["team_key", owner_col]]
             .dropna(subset=["team_key"]).drop_duplicates()
@@ -566,100 +477,109 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
         twpos_avg = twpos_avg.merge(owner_map_df, on="team_key", how="left")
 
         if twpos_avg.empty or twpos_avg["owner_name"].isna().all():
-            st.info("No starter data available to compute relative position scoring.")
-        else:
-            # League average per POS per week
-            league_avg = (
-                twpos_avg.groupby(["week","pos"], dropna=False)["weekly_avg"]
-                         .mean()
-                         .reset_index()
-                         .rename(columns={"weekly_avg":"league_avg"})
-            )
+            return None
 
-            # Join back and compute deviation
-            rel = twpos_avg.merge(league_avg, on=["week","pos"], how="left")
-            rel["diff"] = rel["weekly_avg"] - rel["league_avg"]
+        base = twpos_avg.copy()
+        grp = base.groupby(["week","pos"])["weekly_avg"]
+        base["sum_all"] = grp.transform("sum")
+        base["cnt_all"] = grp.transform("count")
+        den = (base["cnt_all"] - 1).replace(0, np.nan)
+        base["loo_avg"] = np.where(
+            base["cnt_all"] > 1,
+            (base["sum_all"] - base["weekly_avg"]) / den,
+            base["weekly_avg"]
+        )
+        base["diff"] = base["weekly_avg"] - base["loo_avg"]
 
-            # Season average deviation per owner × pos
-            owner_pos_diff = (
-                rel.groupby(["owner_name","pos"], dropna=False)["diff"]
-                   .mean()
-                   .reset_index()
-            )
+        owner_pos_diff = (
+            base.groupby(["owner_name","pos"], dropna=False)["diff"]
+                .mean()
+                .reset_index()
+        )
 
-            # Pivot wide
-            BASE_POS = ["QB","RB","WR","TE","FLEX","K","DEF"]
-            heat = owner_pos_diff.pivot(index="owner_name", columns="pos", values="diff").fillna(0.0)
-            cols_present = [c for c in BASE_POS if c in heat.columns]
-            heat = heat[cols_present]
+        BASE_POS = ["QB","RB","WR","TE","FLEX","K","DEF"]
+        heat_diff = owner_pos_diff.pivot(index="owner_name", columns="pos", values="diff").fillna(0.0)
+        cols_present = [c for c in BASE_POS if c in heat_diff.columns]
+        heat_diff = heat_diff[cols_present]
+        return heat_diff
 
-            # Order owners by season rank
-            owners_sorted = sorted(heat.index.tolist(), key=lambda o: owner_rank_map.get(o, 10**6))
-            heat = heat.reindex(owners_sorted)
+    heat_diff = _compute_positional_diffs_LOO(teams, matchups, players, selected_year, year_col, owner_col)
 
-            # Labels with ranks
-            def _rank_label(owner):
-                r = owner_rank_map.get(owner, None)
+    # ============================================
+    # Owner Tabs (positions on y-axis) — uses LOO diffs
+    # ============================================
+    st.markdown(
+        '<div style="font-size:20px;font-weight:600;margin:10px 0 4px;">Positional Scoring vs League</div>',
+        unsafe_allow_html=True
+    )
+
+    if heat_diff is None or heat_diff.empty:
+        st.info("No data available to build owner tabs for positional scoring.")
+    else:
+        owners_sorted = sorted(heat_diff.index.tolist(), key=lambda o: owner_rank_map.get(o, 10**9))
+        POS_ORDER = ["DEF","K","FLEX","TE","WR","RB","QB"]
+        positions = [p for p in POS_ORDER if p in heat_diff.columns]
+
+        def _rank_label(owner: str) -> str:
+            r = owner_rank_map.get(owner, None)
+            try:
                 return f"#{int(r)} {owner}" if r is not None and pd.notna(r) else owner
-            y_labels = [_rank_label(o) for o in owners_sorted]
+            except Exception:
+                return owner
 
-            # ---- Per-position tabs (default QB) ----
-            POS_ORDER = ["QB","RB","WR","TE","FLEX","K","DEF"]
-            positions = [p for p in POS_ORDER if p in heat.columns]
-            if not positions:
-                st.info("No positions available for relative chart.")
-            else:
-                # default to QB tab when present
-                tabs = st.tabs(positions)
+        POS_COLOR = {
+            "QB":"#d62728","RB":"#2ca02c","WR":"#1f77b4","TE":"#ff7f0e",
+            "FLEX":"#7f7f7f","K":"#9467bd","DEF":"#8c564b"
+        }
 
-                # color map (same palette you used)
-                POS_COLOR = {
-                    "QB":"#d62728","RB":"#2ca02c","WR":"#1f77b4","TE":"#ff7f0e",
-                    "FLEX":"#7f7f7f","K":"#9467bd","DEF":"#8c564b"
-                }
+        tabs = st.tabs([_rank_label(o) for o in owners_sorted])
 
-                # helper to format "#<rank> Owner"
-                def _rank_label(owner):
-                    r = owner_rank_map.get(owner, None)
-                    try:
-                        return f"#{int(r)} {owner}" if r is not None and pd.notna(r) else owner
-                    except Exception:
-                        return owner
+        global_max_abs = float(np.nanmax(np.abs(heat_diff[positions].values))) if positions else 0.0
+        global_xr = (-global_max_abs * 1.15, global_max_abs * 1.15) if global_max_abs > 0 else (-1, 1)
 
-                for pos, tab in zip(positions, tabs):
-                    with tab:
-                        s = heat[pos].copy()
+        for owner, tab in zip(owners_sorted, tabs):
+            with tab:
+                s = heat_diff.loc[owner, positions].astype(float).fillna(0.0)
 
-                        # sort owners by this position’s advantage (desc)
-                        order = s.sort_values(ascending=True).index.tolist()
-                        y_labels = [_rank_label(o) for o in order]
+                # ---- FIXED Y-AXIS ORDER (top→bottom) ----
+                FIXED_POS_ORDER = ["QB","RB","WR","TE","FLEX","K","DEF"]
+                y_lbls = [p for p in FIXED_POS_ORDER if p in s.index]  # keep order, drop missing
+                x_vals = s.reindex(y_lbls).round(3).tolist()
+                colors = [POS_COLOR.get(p, "#999") for p in y_lbls]
 
-                        # symmetric x-range around 0 for readability
-                        max_abs = float(np.nanmax(np.abs(s.values))) if len(s) else 0.0
-                        xr = (-max_abs * 1.15, max_abs * 1.15) if max_abs > 0 else (-1, 1)
+                fig_owner = go.Figure(go.Bar(
+                    y=y_lbls,
+                    x=x_vals,
+                    orientation="h",
+                    marker=dict(color=colors),
+                    hovertemplate="<b>%{y}</b><br>%{x:.2f} pts vs league<extra></extra>"
+                ))
 
-                        fig_pos = go.Figure(go.Bar(
-                            y=y_labels,
-                            x=s.loc[order].round(3).tolist(),
-                            orientation="h",
-                            marker=dict(color=POS_COLOR.get(pos, "#999")),
-                            hovertemplate = "<b>%{y}</b><br>" + f"{pos}: " + "%{x:.2f} pts vs league<extra></extra>"
-                        ))
+                fig_owner.update_layout(
+                    height=max(320, 30*len(y_lbls) + 80),
+                    margin=dict(l=8, r=12, t=6, b=8),
+                    xaxis=dict(
+                        title=dict(text="Avg Weekly Points Per Starter vs League Avg", standoff=10),
+                        range=list(global_xr),
+                        zeroline=True, zerolinecolor="#AAAAAA", zerolinewidth=1,
+                        gridcolor="#3F3F3F", gridwidth=1, fixedrange=True
+                    ),
+                    # lock the y axis to our fixed order
+                    yaxis=dict(
+                        title=None,
+                        categoryorder="array",
+                        categoryarray=y_lbls,
+                        fixedrange=True
+                    ),
+                    showlegend=False
+                )
 
-                        fig_pos.update_layout(
-                            height=max(320, 26*len(y_labels) + 80),
-                            margin=dict(l=8, r=12, t=6, b=8),
-                            xaxis=dict(
-                                title=dict(text=f"Avg Weekly Points Per Starter vs League Avg", standoff=10),
-                                range=list(xr),
-                                zeroline=True, zerolinecolor="#AAAAAA", zerolinewidth=1,
-                                gridcolor="#3F3F3F", gridwidth=1, fixedrange=True,
-                            ),
-                            yaxis=dict(title=None, categoryorder="array", categoryarray=y_labels, fixedrange=True),
-                            showlegend=False,
-                        )
+                fig_owner.add_shape(
+                    type="line", x0=0, x1=0, y0=-0.5, y1=len(y_lbls)-0.5,
+                    line=dict(color="#AAAAAA", width=1)
+                )
 
-                        st.plotly_chart(fig_pos, use_container_width=True, config={"displayModeBar": False})
+                st.plotly_chart(fig_owner, use_container_width=True, config={"displayModeBar": False})
 
     # =============================
     # Consistency vs Output — Avg Weekly Points (x) vs Std Dev (y)
@@ -780,7 +700,7 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
             # Axis ranges with a little padding
             x_min = max(0.0, float(stats["mean"].min()) * 0.95)
             x_max = float(stats["mean"].max()) * 1.05
-            y_min = 0.0
+            y_min = -0.05
             y_max = float(stats["std"].max()) * 1.15 + 0.1
 
             fig_scatter.update_layout(
@@ -804,7 +724,7 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
 
             fig_scatter.add_annotation(
                 x=x_min + (x_med - x_min) / 2,
-                y=y_med / 2,
+                y=y_med / 2 - 0.02,
                 text="Bad & Consistent",
                 showarrow=False,
                 font=dict(size=11, color="#AAAAAA"),
@@ -813,7 +733,7 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
 
             fig_scatter.add_annotation(
                 x=x_max - (x_max - x_med) / 2,
-                y=y_med / 2,
+                y=y_med / 2 - 0.02,
                 text="Elite & Consistent",
                 showarrow=False,
                 font=dict(size=11, color="#AAAAAA"),
@@ -822,7 +742,7 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
 
             fig_scatter.add_annotation(
                 x=x_min + (x_med - x_min) / 2,
-                y=y_max - (y_max - y_med) / 2,
+                y=y_max - (y_max - y_med) / 2 + 0.02,
                 text="Bad & Volatile",
                 showarrow=False,
                 font=dict(size=11, color="#AAAAAA"),
@@ -831,7 +751,7 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
 
             fig_scatter.add_annotation(
                 x=x_max - (x_max - x_med) / 2,
-                y=y_max - (y_max - y_med) / 2,
+                y=y_max - (y_max - y_med) / 2 + 0.02,
                 text="Elite & Volatile",
                 showarrow=False,
                 font=dict(size=11, color="#AAAAAA"),
@@ -847,7 +767,7 @@ def show_season_insights(st, go, teams_df, matchups_df, players_df, draft_roster
             # Optional callout if some owners have very few weeks
             few = stats[stats["n"] < 5]
             if not few.empty:
-                st.caption("Note: Some teams have <5 recorded weeks; volatility may be unstable early in the season.")
+                st.caption("Note: Volatility may be unstable or zero early in the season")
 
     # ============================================
     # 100% Horizontal Stacked Bar:
